@@ -7,7 +7,7 @@
 ### VLESS TLS Vision + Unix-Socket Decoy для Remnawave
 
 ![Version](https://img.shields.io/badge/version-1.0.0-8b5cf6?style=for-the-badge)
-[![Validation](https://img.shields.io/github/actions/workflow/status/himik0011113-afk/CheburNET-Vision-Installer/validate.yml?branch=main&style=for-the-badge&label=проверка)](https://github.com/himik0011113-afk/CheburNET-Vision-Installer/actions/workflows/validate.yml)
+[![Validation](https://img.shields.io/github/actions/workflow/status/leonidkopysov/CheburNET-Vision-Installer/validate.yml?branch=main&style=for-the-badge&label=проверка)](https://github.com/leonidkopysov/CheburNET-Vision-Installer/actions/workflows/validate.yml)
 [![License](https://img.shields.io/badge/license-MIT-22c55e?style=for-the-badge)](LICENSE)
 [![TLS](https://img.shields.io/badge/TLS-1.3-06b6d4?style=for-the-badge)](#-схема-работы)
 [![API](https://img.shields.io/badge/Node_API-2222-f97316?style=for-the-badge)](#-что-потребуется)
@@ -59,14 +59,14 @@ flowchart TD
 Запустите от `root`:
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/himik0011113-afk/CheburNET-Vision-Installer/main/cheburnet-vision-install.sh)
+bash <(curl -fsSL https://raw.githubusercontent.com/leonidkopysov/CheburNET-Vision-Installer/main/cheburnet-vision-install.sh)
 ```
 
 Для запуска с предварительной проверкой SHA-256:
 
 ```bash
-curl -fsSLO https://raw.githubusercontent.com/himik0011113-afk/CheburNET-Vision-Installer/main/cheburnet-vision-install.sh
-curl -fsSLO https://raw.githubusercontent.com/himik0011113-afk/CheburNET-Vision-Installer/main/SHA256SUMS
+curl -fsSLO https://raw.githubusercontent.com/leonidkopysov/CheburNET-Vision-Installer/main/cheburnet-vision-install.sh
+curl -fsSLO https://raw.githubusercontent.com/leonidkopysov/CheburNET-Vision-Installer/main/SHA256SUMS
 sha256sum -c SHA256SUMS && bash ./cheburnet-vision-install.sh
 ```
 
@@ -172,7 +172,7 @@ bash /opt/remnanode/installer.sh --check
 ## Автор и лицензия
 
 **Леонид Копысов**  
-GitHub: **himik0011113**  
+GitHub: **leonidkopysov**  
 Telegram: **[@kopysovleonid](https://t.me/kopysovleonid)**
 
 Оригинальный код ЧебурNET распространяется по лицензии [MIT](LICENSE). Сведения о внешних компонентах приведены в [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
