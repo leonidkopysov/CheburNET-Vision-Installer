@@ -1,0 +1,25 @@
+name: Проверка установщика
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Проверка синтаксиса Bash
+        run: bash -n cheburnet-vision-install.sh
+      - name: Проверка контрольной суммы
+        run: sha256sum -c SHA256SUMS
+      - name: Установка ShellCheck
+        run: sudo apt-get update && sudo apt-get install -y shellcheck
+      - name: Проверка ShellCheck
+        run: shellcheck cheburnet-vision-install.sh
+
