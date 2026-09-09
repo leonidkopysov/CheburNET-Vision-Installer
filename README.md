@@ -78,20 +78,20 @@ Traffic Control устанавливается последним — после
 Запустите от `root`:
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/leonidkopysov/CheburNET-Vision-Installer/v1.1.1/cheburnet-vision-install.sh)
+bash <(curl -fsSL https://raw.githubusercontent.com/leonidkopysov/CheburNET-Vision-Installer/main/cheburnet-vision-install.sh)
 ```
 
 ## Установка с проверкой SHA-256
 
 ```bash
-curl -fsSLO https://raw.githubusercontent.com/leonidkopysov/CheburNET-Vision-Installer/v1.1.1/cheburnet-vision-install.sh
-curl -fsSLO https://raw.githubusercontent.com/leonidkopysov/CheburNET-Vision-Installer/v1.1.1/SHA256SUMS
+curl -fsSLO https://raw.githubusercontent.com/leonidkopysov/CheburNET-Vision-Installer/main/cheburnet-vision-install.sh
+curl -fsSLO https://raw.githubusercontent.com/leonidkopysov/CheburNET-Vision-Installer/main/SHA256SUMS
 sha256sum -c SHA256SUMS && bash ./cheburnet-vision-install.sh
 ```
 
 Установщик дважды спрашивает разрешение перед системными изменениями: сначала на обновление индекса APT, затем на установку компонентов и рассчитанный `full-upgrade`. Phased updates Ubuntu не форсируются.
 
-Команды выше закреплены за стабильным тегом `v1.1.1`: быстрая установка и установка с SHA-256 загружают один и тот же проверенный файл, включая новый сайт «Тихая Среда».
+Ветка `main` содержит текущую стабильную версию `1.1.1`. Быстрая установка и установка с SHA-256 загружают один и тот же проверенный файл, включая новый сайт «Тихая Среда». Старые теги сохраняются только как архив ранее выпущенных версий.
 
 > [!CAUTION]
 > Установка рассчитана на отдельный чистый сервер. Не закрывайте текущую SSH-сессию до проверки повторного входа. Секретный ключ ноды никогда не публикуйте в Issues или диагностических отчётах.
