@@ -144,9 +144,16 @@ def write(path, content, mode=0o600):
     path.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8', dir=path.parent, delete=False) as f:
         f.write(content)
+        f.flush()
+        os.fsync(f.fileno())
         tmp = f.name
     os.chmod(tmp, mode)
     os.replace(tmp, path)
+    fd = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
 
 
 def json_write(path, obj, mode=0o600):
@@ -333,12 +340,12 @@ def main():
         if args.action == 'collect':
             collect(args.output)
         elif args.action == 'check-dns':
-            preflight_dns(validate(json.loads(Path(args.settings).read_text())))
+            preflight_dns(validate(json.loads(Path(args.settings).read_text(encoding='utf-8'))))
         elif args.action == 'validate-key':
-            validate_key(Path(args.key_file).read_text().rstrip('\n'))
+            validate_key(Path(args.key_file).read_text(encoding='utf-8').rstrip('\n'))
         else:
-            key = Path(args.key_file).read_text().rstrip('\n') if args.key_file else None
-            render(json.loads(Path(args.settings).read_text()), args.output, key)
+            key = Path(args.key_file).read_text(encoding='utf-8').rstrip('\n') if args.key_file else None
+            render(json.loads(Path(args.settings).read_text(encoding='utf-8')), args.output, key)
     except (ValueError, KeyError, OSError, subprocess.TimeoutExpired) as e:
         print(f'Ошибка: {e}', file=sys.stderr)
         sys.exit(2)

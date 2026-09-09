@@ -38,7 +38,7 @@ prepare_system_packages
 ''',{'APT_LOG':str(log)})
             self.assertEqual(result.returncode,0,result.stderr)
             self.assertIn('DPkg::Lock::Timeout=600 update',log.read_text())
-            self.assertIn('-s full-upgrade',log.read_text())
+            self.assertIn('-s -o Dpkg::Options::=--force-confold full-upgrade',log.read_text())
             self.assertIn('Проверка компонентов и обновлений завершена',result.stdout)
 
     def test_package_simulation_failure_is_not_reported_as_no_updates(self):
@@ -46,7 +46,7 @@ prepare_system_packages
 package_installed(){ return 0; }
 ask_yes(){ return 0; }
 apt-get(){
-  if [[ $* == *"-s full-upgrade"* ]]; then echo "сломанный индекс" >&2; return 100; fi
+  if [[ $1 == -s ]]; then echo "сломанный индекс" >&2; return 100; fi
   return 0
 }
 prepare_system_packages

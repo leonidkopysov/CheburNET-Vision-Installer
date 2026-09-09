@@ -6,7 +6,7 @@
 
 ```bash
 bash /opt/remnanode/installer.sh --check
-ctc c
+ctc check
 ```
 
 Команды не выводят секретный ключ. Сообщения об уязвимостях направляйте автору лично: Telegram [@kopysovleonid](https://t.me/kopysovleonid). Укажите версию, условия воспроизведения и влияние; рабочие секреты и эксплойты не размещайте в публичном Issue.

@@ -73,13 +73,13 @@ def firewall(text, port, panel_ips):
 
 
 def check_firewall():
-    s = json.loads((BASE/'settings.json').read_text())
+    s = json.loads((BASE/'settings.json').read_text(encoding='utf-8'))
     firewall(capture('ufw', 'status', 'verbose'), s['node_port'], s['panel_ips'])
     print('✓ UFW: API ограничен IP панели; постоянного разрешения TCP/80 нет.')
 
 
 def check():
-    s = json.loads((BASE/'settings.json').read_text())
+    s = json.loads((BASE/'settings.json').read_text(encoding='utf-8'))
     for name, mode in [('', 0o700), ('settings.json', 0o600), ('node.env', 0o600),
                        ('vision-config-profile.json', 0o600), ('docker-compose.yml', 0o600)]:
         path = BASE/name
@@ -115,9 +115,9 @@ def check():
          'Не применён AppArmor docker-default.')
     pid = int(capture('docker', 'inspect', '-f', '{{.State.Pid}}', 'remnanode'))
     need(pid > 0, 'Контейнер не запущен.')
-    need(Path(f'/proc/{pid}/attr/current').read_text().strip() == 'docker-default (enforce)',
+    need(Path(f'/proc/{pid}/attr/current').read_text(encoding='utf-8').strip() == 'docker-default (enforce)',
          'AppArmor контейнера не в режиме enforce.')
-    status = Path(f'/proc/{pid}/status').read_text()
+    status = Path(f'/proc/{pid}/status').read_text(encoding='utf-8')
     need(re.search(r'^NoNewPrivs:\s+1$', status, re.M) and re.search(r'^Seccomp:\s+2$', status, re.M),
          'Не подтверждены NoNewPrivs/seccomp процесса контейнера.')
     image = capture('docker', 'inspect', '-f', '{{.Config.Image}}', 'remnanode')

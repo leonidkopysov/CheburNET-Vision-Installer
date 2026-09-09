@@ -37,6 +37,38 @@ jobs:
 
       - name: Проверка ShellCheck
         run: |
-          shellcheck -S warning src/installer.sh cheburnet-vision-install.sh
-          shellcheck -S warning src/acme-firewall.sh src/acme-pre.sh src/acme-post.sh
-          shellcheck -S warning src/hardening.sh src/renew-hook.sh src/check-nofile.sh
+          shellcheck -S style src/installer.sh cheburnet-vision-install.sh
+          shellcheck -S style src/acme-firewall.sh src/acme-pre.sh src/acme-post.sh
+          shellcheck -S style src/hardening.sh src/renew-hook.sh src/check-nofile.sh
+
+  release:
+    needs: validate
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    concurrency:
+      group: vision-release
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+      - name: Публикация проверенной версии без перезаписи старых релизов
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          version=$(bash ./cheburnet-vision-install.sh --version)
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          tag="v$version"
+          notes="docs/RELEASE-NOTES-$version.md"
+          [[ -f "$notes" ]]
+          sha256sum -c SHA256SUMS
+          if gh release view "$tag" >/dev/null 2>&1; then
+            echo "Выпуск $tag уже существует; его файлы и тег не перезаписываются"
+            exit 0
+          fi
+          gh release create "$tag" --target "$GITHUB_SHA" \
+            --title "ЧебурNET Vision Installer $version" --notes-file "$notes" \
+            cheburnet-vision-install.sh SHA256SUMS

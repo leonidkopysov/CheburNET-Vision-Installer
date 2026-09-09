@@ -57,7 +57,7 @@ from pathlib import Path
 import sys
 p=Path(sys.argv[1])
 def read(name):
-    return dict(line.split(None,1) for line in (p/name).read_text().splitlines() if ' ' in line)
+    return dict(line.split(None,1) for line in (p/name).read_text(encoding='utf-8').splitlines() if ' ' in line)
 before=read('sshd-effective-before.txt');after=read('sshd-effective-after.txt')
 expected={'maxauthtries':'3','logingracetime':'30','allowagentforwarding':'no',
           'permittunnel':'no','x11forwarding':'no','gatewayports':'no'}

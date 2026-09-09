@@ -10,10 +10,11 @@
 set -Eeuo pipefail
 umask 077
 export LC_ALL=C
-readonly CHEBURNET_VERSION=1.1.1
+readonly CHEBURNET_VERSION=1.1.2
 # Фиксированный каталог используется службами systemd и хуками.
 readonly BASE=/opt/remnanode
 WORK=''
+STAGING=''
 ACME_OPEN=0
 CYAN='' GREEN='' YELLOW='' RED='' BOLD='' RESET=''
 if [[ -t 1 && -z ${NO_COLOR:-} ]]; then
@@ -24,6 +25,7 @@ say() { printf '%s\n' "$*"; }
 step() { printf '\n%s%s━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n  ◆ %s\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━%s\n' "$BOLD" "$CYAN" "$*" "$RESET"; }
 ok() { printf '  %s✓%s %s\n' "$GREEN" "$RESET" "$*"; }
 warn() { printf '  %s!%s %s\n' "$YELLOW" "$RESET" "$*"; }
+skip() { printf '  ○ %s\n' "$*"; }
 banner() {
     step "ЧебурNET · VISION / $CHEBURNET_VERSION"
     say '  Установка и настройка VPN-ноды'
@@ -42,18 +44,18 @@ banner() {
     say '  Нужен отдельный сервер с прямым IP и доменом без CDN.'
     say '  Системные компоненты и обновления будут проверены перед настройкой.'
     say ''
-    say '  Д — да · Н — нет. Enter без ответа означает «Нет».'
-    say '  ✓ выполнено · ○ пропущено · ◷ ожидает · ! внимание · ✗ ошибка'
+    say '  Д/Y — да · Н/N — нет. Enter без ответа означает «Нет».'
+    say '  ✓ выполнено · ○ пропущено · ! внимание · ✗ ошибка'
 }
 ask_yes() {
     local answer
     while true; do
-        printf '\n  %s [Д/Н]: ' "$1"
+        printf '\n  %s [Д/Y · Н/N]: ' "$1" > /dev/tty
         IFS= read -r answer < /dev/tty || return 1
         case "$answer" in
-            Д|д|Да|да|ДА|дА|Y|y|Yes|yes|YES) return 0;;
-            ''|Н|н|Нет|нет|НЕТ|нЕт|N|n|No|no|NO) return 1;;
-            *) say '  Введите Д — да или Н — нет.';;
+            Д|д|Да|да|ДА|дА|[Yy]|[Yy][Ee][Ss]) return 0;;
+            ''|Н|н|Нет|НеТ|НЕт|НЕТ|нет|неТ|нЕт|нЕТ|[Nn]|[Nn][Oo]) return 1;;
+            *) printf '  Введите Д/Y — да или Н/N — нет\n' > /dev/tty;;
         esac
     done
 }
@@ -63,16 +65,17 @@ die() { printf '\n  %s%s✗ ОШИБКА:%s %s\n' "$BOLD" "$RED" "$RESET" "$*" >
 cleanup() {
     if [[ ${ACME_OPEN:-0} == 1 ]]; then "$BASE/acme-firewall.sh" close || true; fi
     [[ -z $WORK ]] || rm -rf -- "$WORK"
+    [[ -z $STAGING ]] || rm -rf -- "$STAGING"
 }
 trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
-trap 'printf "\nУстановка остановлена на строке %s (код %s). Секрет не выводится.\n" "$LINENO" "$?" >&2' ERR
+trap 'printf "\n  %s✗ ОШИБКА:%s остановка на строке %s (код %s)\n" "$RED" "$RESET" "$LINENO" "$?" >&2' ERR
 
 unpack() {
     [[ -z $WORK ]] || return 0
     if ! declare -F payload >/dev/null || [[ -z ${CHEBURNET_PAYLOAD_SHA256:-} ]]; then
-        die 'Локальная копия не содержит встроенный архив. Для создания примера используйте исходный установщик.'
+        die 'Для операции со встроенным архивом нужен исходный самодостаточный установщик.'
     fi
     WORK=$(mktemp -d)
     # Сборка содержит собственный код, локальную заглушку и закреплённые компоненты.
@@ -99,18 +102,60 @@ v=json.load(open(sys.argv[1],encoding="utf-8"))[sys.argv[2]]
 print(" ".join(map(str,v)) if isinstance(v,list) else v)' "$BASE/settings.json" "$1"
 }
 
+os_identity() (
+    # Все поля os-release остаются в дочерней оболочке, включая неизвестные.
+    ID='' VERSION_ID='' VERSION_CODENAME='' UBUNTU_CODENAME=''
+    [[ -r /etc/os-release ]] || die 'Не найден файл сведений об операционной системе'
+    # shellcheck disable=SC1091
+    source /etc/os-release
+    printf '%s:%s:%s\n' "$ID" "$VERSION_ID" "${UBUNTU_CODENAME:-$VERSION_CODENAME}"
+)
+
 require_server() {
     (( EUID == 0 )) || die 'Запустите от root.'
     [[ -d /run/systemd/system ]] || die 'Нужен сервер с systemd, не контейнер/chroot.'
-    # shellcheck disable=SC2034
-    local ID VERSION VERSION_ID VERSION_CODENAME UBUNTU_CODENAME
-    # shellcheck disable=SC2034
-    local NAME PRETTY_NAME ID_LIKE HOME_URL
-    # shellcheck disable=SC1091
-    source /etc/os-release
-    case "$ID:$VERSION_ID" in ubuntu:22.04|ubuntu:24.04|debian:12|debian:13) ;;
+    local identity distro release codename
+    identity=$(os_identity)
+    IFS=: read -r distro release codename <<< "$identity"
+    case "$distro:$release" in ubuntu:22.04|ubuntu:24.04|debian:12|debian:13) ;;
         *) die 'Поддерживаются Ubuntu 22.04/24.04 и Debian 12/13.';; esac
     case "$(uname -m)" in x86_64|aarch64) ;; *) die 'Поддерживаются x86_64 и arm64.';; esac
+}
+
+apt_confirmed() {
+    local simulation plan verified attempts=0
+    local -a added updated removed
+    while true; do
+        simulation=$(apt-get -s -o Dpkg::Options::=--force-confold "$@" 2>&1) || {
+            say "$simulation" >&2
+            die 'Не удалось рассчитать доступные обновления APT. Проверьте состояние пакетов'
+        }
+        plan=$(awk '$1=="Inst" || $1=="Remv" || $1=="Conf"' <<< "$simulation")
+        if [[ -z $plan ]]; then
+            ok 'Для этого действия APT обновлений нет'
+            return
+        fi
+        mapfile -t added < <(awk '$1=="Inst" && $3 !~ /^\[/ {print $2}' <<< "$plan" | sort -u)
+        mapfile -t updated < <(awk '$1=="Inst" && $3 ~ /^\[/ {print $2}' <<< "$plan" | sort -u)
+        mapfile -t removed < <(awk '$1=="Remv" {print $2}' <<< "$plan" | sort -u)
+        say '  План APT'
+        show_package_list 'Новые пакеты и зависимости:' "${added[@]}"
+        show_package_list 'Обновляемые пакеты:' "${updated[@]}"
+        show_package_list 'Удаляемые пакеты:' "${removed[@]}"
+        say '  Точные версии и действия:'
+        printf '%s\n' "$plan" | sed 's/^/    /'
+        (( ${#removed[@]} == 0 )) || die 'План требует удаления пакетов. Автоудаление запрещено; разберите план вручную'
+        ask_yes 'Применить этот план APT?' || die 'Изменения APT отменены пользователем'
+        verified=$(apt-get -s -o Dpkg::Options::=--force-confold "$@" 2>&1) || \
+          die 'Повторная проверка плана APT завершилась ошибкой'
+        verified=$(awk '$1=="Inst" || $1=="Remv" || $1=="Conf"' <<< "$verified")
+        [[ $verified != "$plan" ]] || break
+        attempts=$((attempts+1))
+        (( attempts < 3 )) || die 'План APT постоянно меняется. Дождитесь завершения других обновлений'
+        warn 'План изменился; требуется повторное подтверждение'
+    done
+    # Даже при изменении состояния после симуляции APT не вправе удалять пакеты.
+    apt-get -o DPkg::Lock::Timeout=600 -o Dpkg::Options::=--force-confold --no-remove -y "$@"
 }
 
 package_installed() {
@@ -129,9 +174,9 @@ show_package_list() {
 
 prepare_system_packages() {
     step '00 / Проверка компонентов и обновлений системы'
-    local package command_name apt_simulation
+    local package command_name
     local -a required=(ca-certificates curl gnupg openssl python3 dnsutils iproute2 certbot ufw nftables openssh-server)
-    local -a missing=() updates=()
+    local -a missing=()
     for package in "${required[@]}"; do
         package_installed "$package" || missing+=("$package")
     done
@@ -153,30 +198,11 @@ prepare_system_packages() {
     for package in "${required[@]}"; do
         package_installed "$package" || missing+=("$package")
     done
-    if ! apt_simulation=$(apt-get -s full-upgrade 2>&1); then
-        say "$apt_simulation" >&2
-        die 'Не удалось рассчитать доступные обновления APT. Исправьте состояние пакетов и повторите запуск.'
+    if (( ${#missing[@]} > 0 )); then
+        apt_confirmed install --no-install-recommends "${missing[@]}"
     fi
-    mapfile -t updates < <(awk '$1=="Inst" {print $2}' <<< "$apt_simulation" | sort -u)
-
-    step 'План подготовки системы'
-    show_package_list 'Будут установлены обязательные пакеты:' "${missing[@]}"
-    show_package_list 'Будут обновлены установленные пакеты:' "${updates[@]}"
-    if (( ${#missing[@]} == 0 && ${#updates[@]} == 0 )); then
-        ok 'Обязательные компоненты установлены; обновлений нет.'
-    else
-        warn 'Изменения ещё не применены.'
-        if ! ask_yes 'Установить недостающие компоненты и применить найденные обновления?'; then
-            die 'Установка пакетов и ноды отменена; обновлён только индекс APT.'
-        fi
-        if (( ${#missing[@]} > 0 )); then
-            apt-get -o DPkg::Lock::Timeout=600 -o Dpkg::Options::=--force-confold \
-              install -y --no-install-recommends "${missing[@]}"
-        fi
-        if (( ${#updates[@]} > 0 )); then
-            apt-get -o DPkg::Lock::Timeout=600 -o Dpkg::Options::=--force-confold full-upgrade -y
-        fi
-    fi
+    # Новый план рассчитывается после установки зависимостей, а не до неё.
+    apt_confirmed full-upgrade
     for package in "${required[@]}"; do
         package_installed "$package" || die "Обязательный пакет $package не установлен."
     done
@@ -225,12 +251,12 @@ check_ssh_collision() {
         [[ -r $config_file ]] || continue
         while IFS= read -r line; do
             line=${line%%#*}
-            read -r keyword value _ <<< "$line"
+            read -r keyword value _ <<< "$line" || true
             configured_port=''
-            case "$keyword" in
-                Port|port|PORT)
+            case "${keyword,,}" in
+                port)
                     [[ $value =~ ^[0-9]+$ ]] && configured_port=$value;;
-                ListenAddress|listenaddress|LISTENADDRESS)
+                listenaddress)
                     if [[ $value =~ ^\[[^]]+\]:([0-9]+)$ || $value =~ ^[^:]+:([0-9]+)$ ]]; then
                         configured_port=${BASH_REMATCH[1]}
                     fi;;
@@ -243,23 +269,40 @@ check_ssh_collision() {
 
 preflight() {
     step '02 / Проверка сервера и DNS'
-    local port other
-    port=$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["node_port"])' "$WORK/rendered/settings.json")
+    local port other listeners
+    port=$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1],encoding="utf-8"))["node_port"])' "$WORK/rendered/settings.json")
     check_ssh_collision "$port"
     for other in 80 443 "$port"; do
-        [[ -z $(ss -H -ltn "sport = :$other") ]] || die "Порт $other уже занят. Установка рассчитана на отдельную свободную ноду."
+        listeners=$(ss -H -ltn "sport = :$other") || die 'Не удалось прочитать список слушающих портов'
+        [[ -z $listeners ]] || die "Порт $other уже занят. Установка рассчитана на отдельную свободную ноду."
     done
     ! command -v nginx >/dev/null || die 'На сервере уже установлен nginx. Автозамена сторонней конфигурации запрещена.'
     [[ ! -e /var/www/decoy ]] || die 'Каталог /var/www/decoy уже существует; его содержимое не перезаписывается.'
     python3 "$WORK/runtime.py" check-dns --settings "$WORK/rendered/settings.json"
     # Поддержка HTTP/2 проверяется до изменения конфигурации ноды.
     curl -V | awk '/Features:/ && /HTTP2/ {ok=1} END {exit !ok}' || die 'Нужен curl с HTTP2 из пакетов системы.'
-    # Старые перенаправления NAT могут перехватить порт Vision.
-    if command -v iptables >/dev/null && iptables -t nat -S 2>/dev/null | awk '/--dport 443/ && /-j (REDIRECT|DNAT)/ {f=1} END{exit !f}'; then
-        die 'Найден NAT redirect/DNAT для 443. Требуется разбор старой конфигурации.'
-    fi
-    if command -v nft >/dev/null && nft list ruleset 2>/dev/null | awk '/dport 443/ && /(redirect|dnat)/ {f=1} END{exit !f}'; then
-        die 'Найден nftables redirect/DNAT для 443. Требуется разбор старой конфигурации.'
+    check_nat
+    for other in cheburnet-decoy.service cheburnet-acme-cleanup.service; do
+        [[ ! -e /etc/systemd/system/$other && ! -L /etc/systemd/system/$other ]] || \
+          die "Служба $other уже существует. Требуется разбор предыдущей установки"
+    done
+}
+
+check_nat() {
+    local rules command_name
+    # На выделенной новой ноде неизвестные DNAT/REDIRECT требуют ручного
+    # разбора: это также охватывает диапазоны, наборы портов и nft maps.
+    for command_name in iptables ip6tables; do
+        command -v "$command_name" >/dev/null || continue
+        rules=$("$command_name" -t nat -S 2>/dev/null) || \
+          die "Не удалось прочитать NAT через $command_name; отсутствие конфликтов не подтверждено"
+        if grep -Eq -- '-j (REDIRECT|DNAT)( |$)' <<< "$rules"; then
+            die 'Найдены правила NAT DNAT/REDIRECT. Проверьте их совместимость с новой нодой вручную'
+        fi
+    done
+    rules=$(nft list ruleset 2>/dev/null) || die 'Не удалось прочитать nftables; проверка NAT остановлена'
+    if grep -Eq '(^|[[:space:]])(redirect|dnat)([[:space:]]|$)' <<< "$rules"; then
+        die 'Найдены правила nftables DNAT/REDIRECT. Проверьте их совместимость с новой нодой вручную'
     fi
 }
 
@@ -267,14 +310,10 @@ install_docker() {
     step '03 / Docker и подготовка проекта'
     if ! command -v docker >/dev/null; then
         # Пакеты проверяются APT из официального подписанного репозитория Docker.
-        local distro codename arch conflict_package source_file
-        # shellcheck disable=SC2034
-        local ID VERSION VERSION_ID VERSION_CODENAME UBUNTU_CODENAME
-        # shellcheck disable=SC2034
-        local NAME PRETTY_NAME ID_LIKE HOME_URL
-        # shellcheck disable=SC1091
-        source /etc/os-release
-        distro=$ID; codename=${UBUNTU_CODENAME:-$VERSION_CODENAME}; arch=$(dpkg --print-architecture)
+        local distro codename arch conflict_package source_file identity release
+        identity=$(os_identity)
+        IFS=: read -r distro release codename <<< "$identity"
+        arch=$(dpkg --print-architecture)
         case "$distro:$codename" in ubuntu:jammy|ubuntu:noble|debian:bookworm|debian:trixie) ;;
             *) die 'Неизвестная ОС для официального Docker APT.';; esac
         for conflict_package in docker.io docker-compose docker-compose-v2 podman-docker containerd runc; do
@@ -294,7 +333,7 @@ Components: stable
 Architectures: $arch
 Signed-By: /etc/apt/keyrings/cheburnet-docker.asc
 EOF
-        for source_file in /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources; do
+        for source_file in /etc/apt/sources.list /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources; do
             [[ -f $source_file && $source_file != /etc/apt/sources.list.d/cheburnet-docker.sources ]] || continue
             if grep -q 'download.docker.com/linux/' "$source_file"; then
                 die 'Docker APT уже настроен другим файлом. Завершите установку Docker/Compose через существующий репозиторий.'
@@ -305,7 +344,7 @@ EOF
         install -m 644 "$WORK/docker.asc" /etc/apt/keyrings/cheburnet-docker.asc
         install -m 644 "$WORK/cheburnet-docker.sources" /etc/apt/sources.list.d/cheburnet-docker.sources
         apt-get -o DPkg::Lock::Timeout=600 update
-        apt-get -o DPkg::Lock::Timeout=600 install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+        apt_confirmed install --no-install-recommends docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
     fi
     docker compose version >/dev/null || die 'Установите Docker Compose v2.'
     systemctl enable --now docker
@@ -324,16 +363,16 @@ prepare_stack() {
     compose config -q
     compose pull
     local image digest
-    image=$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["services"]["remnanode"]["image"])' \
+    image=$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1],encoding="utf-8"))["services"]["remnanode"]["image"])' \
       "$BASE/docker-compose.yml")
     digest=$(docker image inspect "$image" --format '{{index .RepoDigests 0}}')
     python3 - "$BASE/docker-compose.yml" "$digest" <<'PY'
 import json,sys
 from pathlib import Path
-p=Path(sys.argv[1]);v=json.loads(p.read_text());digest=sys.argv[2]
+p=Path(sys.argv[1]);v=json.loads(p.read_text(encoding='utf-8'));digest=sys.argv[2]
 assert '@sha256:' in digest,'Image digest missing'
 v['services']['remnanode']['image']=digest
-p.write_text(json.dumps(v,indent=2)+'\n')
+p.write_text(json.dumps(v,indent=2)+'\n',encoding='utf-8')
 PY
     systemctl enable --now cheburnet-decoy.service
     ok 'Образ закреплён по digest; служба Unix-сайта запущена.'
@@ -351,83 +390,8 @@ apply_tuning() {
       bash "$BASE/vendor/cheburnet-auto-tuning.sh" < /dev/null | tee "$BASE/tuning-report.log"
     # После тюнинга ограничения API проверяются повторно.
     ufw status | awk '/^Status: active$/ {ok=1} END {exit !ok}' || die 'Тюнинг не активировал UFW. Проверьте его отчёт.'
-    local ip
-    for ip in $ips; do
-        ufw status | awk -v p="$port/tcp" -v ip="$ip" '$1==p && /ALLOW/ {for(i=2;i<=NF;i++)if($i==ip)ok=1} END {exit !ok}' || die "Не подтверждено разрешение API $port для $ip."
-    done
-    ufw status | awk -v p="$port/tcp" \
-      '$1==p && $0 !~ /\(v6\)/ && /ALLOW/ && /Anywhere/ {bad=1} END {exit bad+0}' || \
-      die 'API разрешён для всех; требуется проверка firewall.'
+    python3 "$BASE/security_check.py" --firewall
     ok 'Продвинутая настройка завершена; ограничения API подтверждены.'
-}
-
-traffic_control_report() {
-    step 'ПРОВЕРКА / ЧебурNET Traffic Control'
-    [[ -x /usr/local/bin/cheburnet-traffic-control ]] || die 'Не найден основной файл ЧебурNET Traffic Control.'
-    [[ -x /usr/local/bin/ctc ]] || die 'Не найдена короткая команда ctc.'
-    nft list table inet cheburnet_tc >/dev/null 2>&1 || die 'Таблица фильтрации ЧебурNET Traffic Control не загружена.'
-    systemctl is-enabled --quiet cheburnet-traffic-control.service || die 'Автовосстановление правил ЧебурNET Traffic Control не включено.'
-    systemctl is-active --quiet cheburnet-traffic-control-update.timer || die 'Таймер обновления списков ЧебурNET Traffic Control не активен.'
-    /usr/local/bin/cheburnet-traffic-control status
-    /usr/local/bin/cheburnet-traffic-control check
-    ok 'Фильтрация по трём внешним спискам включена.'
-    ok 'Автовосстановление правил и ежедневное обновление списков работают.'
-    ok 'ЧебурNET Traffic Control установлен последним и полностью проверен.'
-}
-
-install_traffic_control() {
-    step '09 / ЧебурNET Traffic Control'
-    local marker="$BASE/.traffic-control-choice" choice=''
-    [[ -f $marker ]] && choice=$(<"$marker")
-    case "$choice" in
-        installed)
-            traffic_control_report
-            return;;
-        skipped)
-            say '  ○ ЧебурNET Traffic Control пропущен по вашему выбору.'
-            return;;
-        installing)
-            if [[ ! -x /usr/local/bin/cheburnet-traffic-control || ! -f /var/lib/cheburnet-traffic-control/state.json ]]; then
-                die 'Предыдущая установка ЧебурNET Traffic Control прервалась. Проверьте её состояние перед продолжением.'
-            fi
-            if [[ -f /var/lib/cheburnet-traffic-control/enabled ]]; then
-                /usr/local/bin/cheburnet-traffic-control repair --yes
-            else
-                /usr/local/bin/cheburnet-traffic-control activate
-            fi
-            printf '%s\n' installed > "$marker"
-            traffic_control_report
-            return;;
-        '') ;;
-        *) die 'Повреждена отметка выбора ЧебурNET Traffic Control.';;
-    esac
-
-    if [[ -e /usr/local/bin/cheburnet-traffic-control || -e /usr/local/bin/ctc || \
-          -e /var/lib/cheburnet-traffic-control/state.json ]] || nft list table inet cheburnet_tc >/dev/null 2>&1; then
-        die 'На сервере уже есть ЧебурNET Traffic Control или его данные. Автоперезапись существующей установки запрещена.'
-    fi
-
-    say '  Компонент загрузит три внешних списка блокировок и применит их через nftables.'
-    say '  IP администратора и панели будут добавлены в исключения после вашего подтверждения.'
-    say '  SSH-порт не блокируется правилами списков.'
-    if ! ask_yes 'Установить и включить ЧебурNET Traffic Control?'; then
-        printf '%s\n' skipped > "$marker"
-        say '  ○ ЧебурNET Traffic Control пропущен. Установка Vision продолжается.'
-        return
-    fi
-
-    printf '%s\n' installing > "$marker"
-    SSH_CONNECTION="${SSH_CONNECTION:-}" python3 -u -c '
-import importlib.util, sys
-path = sys.argv[1]
-spec = importlib.util.spec_from_file_location("cheburnet_traffic_control", path)
-module = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(module)
-module.main(["install", "--yes"])
-' "$BASE/cheburnet-traffic-control.py" < /dev/tty | tee "$BASE/traffic-control-install.log"
-    /usr/local/bin/cheburnet-traffic-control activate
-    printf '%s\n' installed > "$marker"
-    traffic_control_report
 }
 
 harden_host() {
@@ -486,6 +450,79 @@ issue_certificate() {
     ok 'Сертификат и пробное продление проверены; временный порт 80 закрыт.'
 }
 
+traffic_control_report() {
+    say '  Проверка ЧебурNET Traffic Control'
+    check_traffic_control
+    /usr/local/bin/cheburnet-traffic-control status
+    ok 'Фильтрация по трём внешним спискам включена.'
+    ok 'Автовосстановление правил и ежедневное обновление списков работают.'
+    ok 'ЧебурNET Traffic Control установлен последним и полностью проверен.'
+}
+
+check_traffic_control() {
+    [[ -x /usr/local/bin/cheburnet-traffic-control ]] || die 'Не найден основной файл ЧебурNET Traffic Control.'
+    [[ -x /usr/local/bin/ctc ]] || die 'Не найдена короткая команда ctc.'
+    nft list table inet cheburnet_tc >/dev/null 2>&1 || die 'Таблица фильтрации ЧебурNET Traffic Control не загружена.'
+    systemctl is-enabled --quiet cheburnet-traffic-control.service || die 'Автовосстановление правил ЧебурNET Traffic Control не включено.'
+    systemctl is-active --quiet cheburnet-traffic-control-update.timer || die 'Таймер обновления списков ЧебурNET Traffic Control не активен.'
+    /usr/local/bin/cheburnet-traffic-control check
+}
+
+install_traffic_control() {
+    step '09 / ЧебурNET Traffic Control'
+    local marker="$BASE/.traffic-control-choice" choice=''
+    [[ -f $marker ]] && choice=$(<"$marker")
+    case "$choice" in
+        installed)
+            traffic_control_report
+            return;;
+        skipped)
+            skip 'ЧебурNET Traffic Control пропущен по вашему выбору.'
+            return;;
+        installing)
+            if [[ ! -x /usr/local/bin/cheburnet-traffic-control || ! -f /var/lib/cheburnet-traffic-control/state.json ]]; then
+                die 'Предыдущая установка ЧебурNET Traffic Control прервалась. Проверьте её состояние перед продолжением.'
+            fi
+            if [[ -f /var/lib/cheburnet-traffic-control/enabled ]]; then
+                /usr/local/bin/cheburnet-traffic-control repair --yes
+            else
+                /usr/local/bin/cheburnet-traffic-control activate
+            fi
+            printf '%s\n' installed > "$marker"
+            traffic_control_report
+            return;;
+        '') ;;
+        *) die 'Повреждена отметка выбора ЧебурNET Traffic Control.';;
+    esac
+
+    if [[ -e /usr/local/bin/cheburnet-traffic-control || -e /usr/local/bin/ctc || \
+          -e /var/lib/cheburnet-traffic-control/state.json ]] || nft list table inet cheburnet_tc >/dev/null 2>&1; then
+        die 'На сервере уже есть ЧебурNET Traffic Control или его данные. Автоперезапись существующей установки запрещена.'
+    fi
+
+    say '  Компонент загрузит три внешних списка блокировок и применит их через nftables.'
+    say '  IP администратора и панели будут добавлены в исключения после вашего подтверждения.'
+    say '  SSH-порт не блокируется правилами списков.'
+    if ! ask_yes 'Установить и включить ЧебурNET Traffic Control?'; then
+        printf '%s\n' skipped > "$marker"
+        skip 'ЧебурNET Traffic Control пропущен. Установка Vision продолжается.'
+        return
+    fi
+
+    printf '%s\n' installing > "$marker"
+    SSH_CONNECTION="${SSH_CONNECTION:-}" python3 -u -c '
+import importlib.util, sys
+path = sys.argv[1]
+spec = importlib.util.spec_from_file_location("cheburnet_traffic_control", path)
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+module.main(["install", "--yes"])
+' "$BASE/cheburnet-traffic-control.py" < /dev/tty | tee "$BASE/traffic-control-install.log"
+    /usr/local/bin/cheburnet-traffic-control activate
+    printf '%s\n' installed > "$marker"
+    traffic_control_report
+}
+
 check() {
     [[ -f $BASE/.cheburnet-managed && -f $BASE/settings.json ]] || die 'Установка ЧебурNET не найдена.'
     step 'Проверка конфигурации и работающих компонентов'
@@ -509,12 +546,9 @@ check() {
     python3 "$BASE/security_check.py"
     case "$(cat "$BASE/.traffic-control-choice" 2>/dev/null || true)" in
         installed)
-            [[ -x /usr/local/bin/ctc ]] || die 'ЧебурNET Traffic Control установлен не полностью.'
-            nft list table inet cheburnet_tc >/dev/null 2>&1 || die 'Таблица ЧебурNET Traffic Control не загружена.'
-            systemctl is-enabled --quiet cheburnet-traffic-control.service || die 'Автовосстановление ЧебурNET Traffic Control выключено.'
-            systemctl is-active --quiet cheburnet-traffic-control-update.timer || die 'Автообновление списков ЧебурNET Traffic Control не работает.'
+            check_traffic_control
             ok 'ЧебурNET Traffic Control, его правила и таймер обновлений активны.';;
-        skipped) say '  ○ ЧебурNET Traffic Control пропущен по вашему выбору.';;
+        skipped) skip 'ЧебурNET Traffic Control пропущен по вашему выбору.';;
         *) die 'Не найден результат этапа ЧебурNET Traffic Control.';;
     esac
     [[ -z $(ss -H -ltnp | awk '/nginx/') ]] || die 'nginx неожиданно слушает TCP. Эталон допускает только Unix sockets.'
@@ -541,20 +575,110 @@ show_result() {
     [[ -r $BASE/vision-config-profile.json && -r $BASE/host-settings.txt ]] || \
       die "Готовые профиль и настройки хоста не найдены в $BASE."
     step 'Готовый профиль ноды — вставьте в Remnawave'
+    warn 'Ниже выводится профиль с доменом и путями сертификатов. Не публикуйте его, если добавили личные данные'
     cat "$BASE/vision-config-profile.json"
     step 'Настройки хоста — укажите в Remnawave'
     cat "$BASE/host-settings.txt"
 }
 
+publish_project() {
+    local name
+    local -a managed=(runtime.py renew-hook.sh acme-firewall.sh acme-pre.sh acme-post.sh
+        check-nofile.sh hardening.sh security_check.py cheburnet-traffic-control.py)
+    [[ ! -e $BASE && ! -L $BASE ]] || die "Каталог $BASE уже существует; публикация отменена"
+    # До атомарного переименования BASE не существует. Обычная ошибка удаляет
+    # только этот временный каталог; SIGKILL оставляет безопасный staging-снимок.
+    STAGING=$(mktemp -d "${BASE}.staging.XXXXXX")
+    for name in settings.json vision-config-profile.json docker-compose.yml node.env host-settings.txt; do
+        install -m 600 "$WORK/rendered/$name" "$STAGING/$name"
+    done
+    install -m 644 "$WORK/rendered/nginx.conf" "$STAGING/nginx.conf"
+    for name in "${managed[@]}"; do
+        install -m 600 "$WORK/$name" "$STAGING/$name"
+    done
+    chmod 700 "$STAGING/"*.sh
+    install -d -m 700 "$STAGING/vendor" "$STAGING/bootstrap"
+    install -m 600 "$WORK/cheburnet-auto-tuning.sh" "$STAGING/vendor/cheburnet-auto-tuning.sh"
+    for name in decoy.html cheburnet-decoy.service cheburnet-acme-cleanup.service; do
+        install -m 600 "$WORK/$name" "$STAGING/bootstrap/$name"
+    done
+    install -m 700 "$WORK/installer-manager.sh" "$STAGING/installer.sh"
+    printf '%s\n' "$CHEBURNET_VERSION" > "$STAGING/.cheburnet-managed"
+    printf '%s\n' pending > "$STAGING/.bootstrap-pending"
+    python3 - "$STAGING" "$BASE" <<'PY'
+import os,sys
+from pathlib import Path
+staging,base=map(Path,sys.argv[1:])
+if base.exists() or base.is_symlink():
+    sys.exit('  ✗ ОШИБКА: каталог ноды уже существует; публикация отменена')
+for root,dirs,files in os.walk(staging,topdown=False):
+    for name in files:
+        with open(Path(root)/name,'rb') as f:
+            os.fsync(f.fileno())
+    fd=os.open(root,os.O_RDONLY|os.O_DIRECTORY)
+    try: os.fsync(fd)
+    finally: os.close(fd)
+os.rename(staging,base)
+fd=os.open(base.parent,os.O_RDONLY|os.O_DIRECTORY)
+try: os.fsync(fd)
+finally: os.close(fd)
+PY
+    STAGING=''
+}
+
+bootstrap_project() {
+    [[ -f $BASE/.bootstrap-pending ]] || return 0
+    local name nginx_version
+    say '  Завершение сохранённой подготовки проекта'
+    for name in decoy.html cheburnet-decoy.service cheburnet-acme-cleanup.service; do
+        [[ -f $BASE/bootstrap/$name && ! -L $BASE/bootstrap/$name ]] || \
+          die "Не найден сохранённый файл подготовки: $name. Автопродолжение невозможно"
+    done
+    # Секреты/код: root 0600/0700. Публичный сайт/nginx.conf: 0644.
+    # Сокеты: root:root 0660, каталог для прохода служб: 0755.
+    install -d -m 755 /var/www/decoy "$BASE/fallback-sockets"
+    install -m 644 "$BASE/bootstrap/decoy.html" /var/www/decoy/index.html
+    apt_confirmed install --no-install-recommends nginx
+    systemctl disable --now nginx
+    systemctl mask nginx.service
+    nginx_version=$(nginx -v 2>&1 | sed -n 's@.*nginx/\([0-9.]*\).*@\1@p')
+    [[ $nginx_version =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || die 'Не удалось определить версию nginx'
+    python3 - "$BASE" "$nginx_version" <<'PY'
+import json,sys
+from pathlib import Path
+base=Path(sys.argv[1]);sys.path.insert(0,str(base))
+from runtime import nginx,json_write,write
+s=json.loads((base/'settings.json').read_text(encoding='utf-8'));s['nginx_version']=sys.argv[2]
+json_write(base/'settings.json',s);write(base/'nginx.conf',nginx(s),0o644)
+PY
+    for name in cheburnet-decoy.service cheburnet-acme-cleanup.service; do
+        install -m 644 "$BASE/bootstrap/$name" "/etc/systemd/system/$name"
+    done
+    systemctl daemon-reload
+    systemctl enable cheburnet-acme-cleanup.service
+    # Отметка удаляется только после завершения всех подготовительных действий.
+    python3 - "$BASE/.bootstrap-pending" <<'PY'
+import os,sys
+from pathlib import Path
+p=Path(sys.argv[1]);p.unlink()
+fd=os.open(p.parent,os.O_RDONLY|os.O_DIRECTORY)
+try: os.fsync(fd)
+finally: os.close(fd)
+PY
+}
+
 main() {
-    local action managed_file rendered_file
-    local -a managed_files rendered_files
+    local action
     if (( $# == 0 )); then
         if declare -F payload >/dev/null; then action=--install; else action=--help; fi
     else
         action=$1
     fi
+    if [[ $action != --render ]] && (( $# > 1 )); then
+        die "Команда $action не принимает дополнительные аргументы"
+    fi
     case "$action" in
+        --version) say "$CHEBURNET_VERSION"; return;;
         --help|-h)
             if declare -F payload >/dev/null; then
                 cat <<'EOF'
@@ -565,7 +689,11 @@ main() {
                                     код 2 означает ожидание профиля TLS/443
   --show                            показать профиль ноды и настройки хоста
   --preview                         показать вступление без установки
+  --version                         показать версию установщика
   --render ФАЙЛ_НАСТРОЕК КАТАЛОГ    создать пример без установки
+
+Коды: 0 — успех; 1 — ошибка; 2 — установка/проверка ожидает профиля TLS/443;
+130 — прерывание пользователем; 143 — завершение сигналом TERM
 EOF
             else
                 cat <<'EOF'
@@ -574,6 +702,10 @@ EOF
   --check     проверить компоненты; код 2 означает ожидание профиля TLS/443
   --show      показать профиль ноды и настройки хоста
   --preview   показать вступление
+  --version   показать версию установщика
+
+Коды: 0 — успех; 1 — ошибка; 2 — ожидание профиля TLS/443;
+130 — прерывание пользователем; 143 — завершение сигналом TERM
 
 Для новой установки и --render используйте исходный самодостаточный файл.
 EOF
@@ -601,7 +733,7 @@ EOF
         banner
         [[ -r /dev/tty ]] || die 'Запустите из интерактивного терминала.'
         if ! confirm_install; then
-            say '  ○ Установка отменена. Настройки сервера не изменены.'
+            skip 'Установка отменена. Настройки сервера не изменены.'
             return
         fi
     fi
@@ -620,58 +752,17 @@ EOF
             python3 "$BASE/runtime.py" check-dns --settings "$BASE/settings.json"
             ;;
         --install)
-            [[ ! -e $BASE ]] || \
-              die "Каталог $BASE уже существует. Для своей установки используйте --resume; стороннюю ноду сначала разберите отдельно."
+            [[ ! -e $BASE && ! -L $BASE ]] || \
+              die "Каталог $BASE уже существует. Для управляемой установки используйте --resume. Без маркера — ручной разбор; ничего не удаляйте вслепую"
             prepare_system_packages
             unpack
             collect
             preflight
             install_docker
-            install -d -m 700 "$BASE"
-            rendered_files=(settings.json vision-config-profile.json docker-compose.yml node.env host-settings.txt)
-            for rendered_file in "${rendered_files[@]}"; do
-                install -m 600 "$WORK/rendered/$rendered_file" "$BASE/$rendered_file"
-            done
-            install -m 644 "$WORK/rendered/nginx.conf" "$BASE/nginx.conf"
-            # Закрытые настройки и служебный код принадлежат root (0600/0700).
-            # Публичная заглушка и nginx.conf читаются службами и имеют 0644;
-            # каталог сокетов доступен для прохода, сами сокеты создаются 0660.
-            managed_files=(
-                runtime.py renew-hook.sh acme-firewall.sh acme-pre.sh acme-post.sh
-                check-nofile.sh hardening.sh security_check.py cheburnet-traffic-control.py
-            )
-            for managed_file in "${managed_files[@]}"; do
-                install -m 600 "$WORK/$managed_file" "$BASE/$managed_file"
-            done
-            chmod 700 "$BASE/"*.sh
-            install -d -m 755 /var/www/decoy "$BASE/fallback-sockets"
-            install -m 644 "$WORK/decoy.html" /var/www/decoy/index.html
-            apt-get -o DPkg::Lock::Timeout=600 -o Dpkg::Options::=--force-confold \
-              install -y --no-install-recommends nginx
-            systemctl disable --now nginx
-            systemctl mask nginx.service
-            local nginx_version
-            nginx_version=$(nginx -v 2>&1 | sed -n 's@.*nginx/\([0-9.]*\).*@\1@p')
-            [[ $nginx_version =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || die 'Не удалось определить версию nginx из nginx -v.'
-            python3 - "$BASE" "$nginx_version" <<'PY'
-import json,sys
-from pathlib import Path
-base=Path(sys.argv[1]); sys.path.insert(0,str(base))
-from runtime import nginx,json_write,write
-s=json.loads((base/'settings.json').read_text()); s['nginx_version']=sys.argv[2]
-json_write(base/'settings.json',s);write(base/'nginx.conf',nginx(s),0o644)
-PY
-            install -m 644 "$WORK/cheburnet-decoy.service" /etc/systemd/system/cheburnet-decoy.service
-            install -m 644 "$WORK/cheburnet-acme-cleanup.service" /etc/systemd/system/cheburnet-acme-cleanup.service
-            systemctl daemon-reload
-            systemctl enable cheburnet-acme-cleanup.service
-            install -d -m 700 "$BASE/vendor"
-            cp "$WORK/cheburnet-auto-tuning.sh" "$BASE/vendor/"
-            # Менеджер берётся из проверенного архива и не зависит от /dev/fd.
-            install -m 700 "$WORK/installer-manager.sh" "$BASE/installer.sh"
-            printf '%s\n' "$CHEBURNET_VERSION" > "$BASE/.cheburnet-managed"
+            publish_project
             ;;
     esac
+    bootstrap_project
     prepare_stack
     # Firewall и тюнинг завершаются до первого запуска API.
     apply_tuning
@@ -686,7 +777,7 @@ PY
     step 'ИТОГИ УСТАНОВКИ / Проверка компонентов'
     bash "$BASE/installer.sh" --check-internal || rc=$?
     [[ $rc == 0 || $rc == 2 ]] || die 'Итоговая проверка не прошла.'
-    systemd-analyze security cheburnet-decoy.service --no-pager > "$BASE/service-security-report.txt" 2>&1 || say '  ○ Оценка systemd-analyze недоступна; обязательные параметры проверены отдельно.'
+    systemd-analyze security cheburnet-decoy.service --no-pager > "$BASE/service-security-report.txt" 2>&1 || skip 'Оценка systemd-analyze недоступна; обязательные параметры проверены отдельно.'
     if [[ $rc == 2 ]]; then
         warn 'Примените профиль в панели: сквозная проверка TLS/443 ещё ожидает выполнения.'
     else
@@ -695,11 +786,14 @@ PY
     warn 'Подключение настоящим VLESS-клиентом и доступ извне проверяются отдельно.'
     show_result
     say "Файлы: $BASE · повторная проверка: bash $BASE/installer.sh --check"
+    # exit, а не return: ожидаемое состояние не должно запускать ERR-ловушку.
+    exit "$rc"
 }
 
 # Private child entry
 # Внутренняя проверка не захватывает блокировку родительского процесса повторно.
 if [[ ${1:-} == --check-internal ]]; then
+    (( $# == 1 )) || die 'Внутренняя проверка не принимает дополнительные аргументы'
     require_server
     check
 else
