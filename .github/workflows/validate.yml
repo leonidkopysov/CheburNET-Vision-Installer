@@ -52,10 +52,11 @@ jobs:
       cancel-in-progress: false
     steps:
       - uses: actions/checkout@v4
-      - name: Публикация проверенной версии без перезаписи старых релизов
+      - name: Публикация проверенной версии
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
+          COMMIT_MESSAGE: ${{ github.event.head_commit.message }}
         shell: bash
         run: |
           set -euo pipefail
@@ -66,7 +67,16 @@ jobs:
           [[ -f "$notes" ]]
           sha256sum -c SHA256SUMS
           if gh release view "$tag" >/dev/null 2>&1; then
-            echo "Выпуск $tag уже существует; его файлы и тег не перезаписываются"
+            if [[ "$COMMIT_MESSAGE" != *"[обновить-выпуск]"* ]]; then
+              echo "Выпуск $tag уже существует; для его контролируемого обновления нужен маркер commit"
+              exit 0
+            fi
+            git tag -f "$tag" "$GITHUB_SHA"
+            git push --force origin "refs/tags/$tag"
+            gh release edit "$tag" --title "ЧебурNET Vision Installer $version" \
+              --notes-file "$notes"
+            gh release upload "$tag" --clobber cheburnet-vision-install.sh SHA256SUMS
+            echo "Выпуск $tag обновлён после успешной проверки"
             exit 0
           fi
           gh release create "$tag" --target "$GITHUB_SHA" \
