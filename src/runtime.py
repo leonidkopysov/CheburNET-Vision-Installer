@@ -1,0 +1,351 @@
+#!/usr/bin/env python3
+"""ЧебурNET Vision: input validation and deterministic configuration generation."""
+import argparse
+import base64
+import getpass
+import ipaddress
+import json
+import os
+from pathlib import Path
+import re
+import subprocess
+import sys
+import tempfile
+
+NODE_IMAGE = 'remnawave/node:3.4.1'
+# Fixed installation layout, not an operator-configurable path.
+BASE = '/opt/remnanode'
+TAG = 'Vision-TLS'
+
+
+def parse_yes_no(value):
+    value = value.strip().lower()
+    if value in ('y', 'yes', 'д', 'да'):
+        return True
+    if value in ('n', 'no', 'н', 'нет'):
+        return False
+    raise ValueError('Введите Д — да или Н — нет.')
+
+
+def nginx_version(value):
+    if not isinstance(value, str) or not re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+', value):
+        raise ValueError('Не удалось определить версию nginx (ожидается, например, 1.24.0).')
+    return tuple(map(int, value.split('.')))
+
+
+def validate(settings):
+    s = dict(settings)
+    domain = s['domain'].lower().rstrip('.')
+    labels = domain.split('.')
+    if len(domain) > 253 or len(labels) < 2 or not all(
+        re.fullmatch(r'[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?', x) for x in labels
+    ) or not re.search(r'[a-z]', labels[-1]):
+        raise ValueError('Укажите домен ASCII/punycode без https://, порта и пути.')
+    s['domain'] = domain
+    port = str(s.get('node_port', '2222'))
+    if not re.fullmatch(r'[0-9]{1,5}', port) or not 1024 <= int(port) <= 65535:
+        raise ValueError('Порт API: целое число от 1024 до 65535.')
+    s['node_port'] = int(port)
+    ips = re.split(r'[\s,]+', s['panel_ips'].strip())
+    if not ips or not ips[0]:
+        raise ValueError('Укажите IP исходящих подключений панели.')
+    for ip in ips:
+        address = ipaddress.ip_address(ip)  # Только отдельные IP-адреса, без CIDR.
+        if address.is_unspecified or address.is_multicast or address.is_loopback:
+            raise ValueError('Нужен реальный исходящий IP панели, не wildcard/loopback/multicast.')
+    s['panel_ips'] = ' '.join(dict.fromkeys(str(ipaddress.ip_address(x)) for x in ips))
+    if not re.fullmatch(r'[^\s@]+@[^\s@]+\.[^\s@]+', s['email']):
+        raise ValueError('Нужен рабочий email для уведомлений о сертификате.')
+    version = s['panel_version']
+    if not re.fullmatch(r'\d+\.\d+\.\d+', version):
+        raise ValueError('Версия панели: например 3.4.3.')
+    if tuple(map(int, version.split('.'))) < (3, 3, 0):
+        raise ValueError('Эта сборка рассчитана на панель Remnawave 3.3.0+.')
+    nginx_version(s.get('nginx_version', '1.24.0'))
+    # This field is a compatibility gate for SNI verification, not an image selector.
+    if int(version.split('.')[0]) != 3:
+        raise ValueError('Для новой мажорной версии панели нужна отдельная проверка совместимости.')
+    return s
+
+
+def collect(target):
+    # Validate each field independently; ask for the secret only after all others are valid.
+    s = dict(domain='node.example.com', node_port=2222, panel_ips='203.0.113.10',
+             panel_version='3.4.3', email='operator@example.com')
+    print('Обозначения: Д — да · Н — нет. Enter принимает значение в скобках.')
+    fields = [('domain', 'Домен ноды (без https://)', None),
+              ('node_port', 'Порт API ноды, такой же в панели', '2222'),
+              ('panel_ips', 'IP исходящих подключений панели (через пробел)', None),
+              ('panel_version', 'Версия панели 3.x (3.3.0+; проверка совместимости SNI)', None),
+              ('email', "Email для сертификата Let's Encrypt", None)]
+    for field, label, default in fields:
+        while True:
+            value = input(label + (f' [{default}]' if default else '') + ': ')
+            value = value or default or ''
+            try:
+                s = validate(dict(s, **{field: value}))
+                break
+            except ValueError as e:
+                print(f'Ошибка: {e} Повторите только это поле.', file=sys.stderr)
+    print(f'Образ: {NODE_IMAGE}; версия панели {s["panel_version"]} прошла проверку требований SNI.')
+    while True:
+        secret = getpass.getpass('Секретный ключ ноды из панели (ввод скрыт): ')
+        try:
+            validate_key(secret)
+            break
+        except ValueError as e:
+            print(f'Ошибка: {e} Повторите ключ.', file=sys.stderr)
+    print(f'\nДомен: {s["domain"]} · API: {s["node_port"]} · Панель: {s["panel_ips"]}')
+    print('Секрет получен и проверен; его значение не выводится.')
+    while True:
+        try:
+            if not parse_yes_no(input('Начать установку с этими настройками? [Д/Н, по умолчанию Н]: ') or 'Н'):
+                raise KeyboardInterrupt
+            break
+        except ValueError as e:
+            print(e, file=sys.stderr)
+    render(s, target, secret)
+
+
+def validate_dns_records(a_records, aaaa_records, local_addresses):
+    """Каждый опубликованный IP-адрес домена должен принадлежать серверу."""
+    resolved = {ipaddress.ip_address(x) for x in (*a_records, *aaaa_records)}
+    local = {ipaddress.ip_address(x) for x in local_addresses}
+    if not resolved:
+        raise ValueError('У домена нет IP-адреса этого сервера.')
+    wrong = resolved - local
+    if wrong:
+        raise ValueError('DNS содержит адреса другого сервера/CDN: ' + ', '.join(sorted(map(str, wrong))) +
+                         '. Нужен прямой IP на интерфейсе; NAT требует отдельной проверки.')
+    return True
+
+
+def preflight_dns(settings):
+    def capture(*args):
+        r = subprocess.run(args, capture_output=True, text=True, timeout=15)
+        if r.returncode:
+            raise ValueError(f'Не удалось выполнить {args[0]} для проверки DNS/адресов.')
+        return r.stdout
+    records = {}
+    for kind in ('A', 'AAAA'):
+        answer = capture('dig', '+time=3', '+tries=1', '+noall', '+answer', '+comments', settings['domain'], kind)
+        if 'status: NOERROR,' not in answer:
+            raise ValueError(f'DNS-запрос {kind} завершился ошибкой, установка не продолжена.')
+        records[kind] = [cols[-1] for line in answer.splitlines()
+                         if len(cols := line.split()) >= 5 and cols[-2] == kind]
+    interfaces = json.loads(capture('ip', '-j', 'address', 'show'))
+    local = [a['local'] for i in interfaces for a in i.get('addr_info', []) if a.get('scope') == 'global']
+    validate_dns_records(records['A'], records['AAAA'], local)
+    print('✓ Все IP-адреса домена совпадают с адресами интерфейсов сервера.')
+
+
+def write(path, content, mode=0o600):
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8', dir=path.parent, delete=False) as f:
+        f.write(content)
+        tmp = f.name
+    os.chmod(tmp, mode)
+    os.replace(tmp, path)
+
+
+def json_write(path, obj, mode=0o600):
+    write(path, json.dumps(obj, ensure_ascii=False, indent=2) + '\n', mode)
+
+
+def profile(s):
+    cert = f"/etc/letsencrypt/live/{s['domain']}"
+    return {
+        'log': {'access': 'none', 'dnsLog': False, 'loglevel': 'warning'},
+        'dns': {
+            'servers': [
+                {'address': f'https+local://{host}/dns-query', 'timeoutMs': 3000}
+                for host in ('dns.adguard-dns.com', 'dns.comss.one')
+            ],
+            'disableCache': False,
+            'disableFallback': False, 'enableParallelQuery': False,
+        },
+        'inbounds': [{
+            'tag': TAG, 'port': 443,
+            'protocol': 'vless',
+            'settings': {'flow': 'xtls-rprx-vision', 'clients': [], 'fallbacks': [
+                {'alpn': 'h2', 'dest': '/run/xray-fallback/h2.sock', 'xver': 0},
+                {'dest': '/run/xray-fallback/h1.sock', 'xver': 0},
+            ], 'decryption': 'none'},
+            'sniffing': {'enabled': True, 'routeOnly': True,
+                         'destOverride': ['http', 'tls', 'quic']},
+            'streamSettings': {
+                'network': 'tcp', 'security': 'tls',
+                'tlsSettings': {'alpn': ['h2', 'http/1.1'], 'minVersion': '1.3',
+                                'certificates': [{'keyFile': cert + '/privkey.pem',
+                                                  'certificateFile': cert + '/fullchain.pem'}],
+                                'rejectUnknownSni': True},
+            },
+        }],
+        'outbounds': [
+            {'tag': 'DIRECT', 'protocol': 'freedom'},
+            {'tag': 'BLOCK', 'protocol': 'blackhole'},
+        ],
+        'routing': {'rules': [
+            {'type': 'field', 'port': '443', 'network': 'udp', 'inboundTag': [TAG], 'outboundTag': 'BLOCK'},
+            {'type': 'field', 'port': '25', 'network': 'tcp', 'outboundTag': 'BLOCK'},
+            {'type': 'field', 'protocol': ['bittorrent'], 'outboundTag': 'BLOCK'},
+            {'type': 'field', 'ip': ['geoip:private'], 'outboundTag': 'BLOCK'},
+            {'type': 'field', 'domain': ['geosite:private'], 'outboundTag': 'BLOCK'},
+            {'type': 'field', 'domain': [
+                'geosite:category-ads-all', 'domain:analytics.google.com', 'domain:adjust.net.in',
+                'domain:amplitude.com', 'domain:metrika.yandex.ru', 'domain:mytracker.ru',
+            ], 'outboundTag': 'BLOCK'},
+        ], 'domainStrategy': 'IPIfNonMatch'},
+    }
+
+
+def nginx(s):
+    # The legacy listen parameter also works on newer nginx (with a deprecation warning).
+    version = nginx_version(s.get('nginx_version', '1.24.0'))
+    h2listen = '' if version >= (1, 25, 1) else ' http2'
+    h2on = '        http2 on;\n' if version >= (1, 25, 1) else ''
+    return '''user www-data;
+worker_processes auto;
+error_log /var/log/nginx/cheburnet-error.log warn;
+pid /run/cheburnet-nginx/nginx.pid;
+events { worker_connections 1024; }
+http {
+    include /etc/nginx/mime.types;
+    default_type application/octet-stream;
+    access_log off;
+    server_tokens off;
+    client_body_temp_path /run/cheburnet-nginx/body;
+    proxy_temp_path /run/cheburnet-nginx/proxy;
+    fastcgi_temp_path /run/cheburnet-nginx/fastcgi;
+    uwsgi_temp_path /run/cheburnet-nginx/uwsgi;
+    scgi_temp_path /run/cheburnet-nginx/scgi;
+''' + f'''
+    server {{
+        listen unix:/opt/remnanode/fallback-sockets/h1.sock;
+        server_name {s['domain']};
+        root /var/www/decoy;
+        index index.html;
+        location / {{ try_files $uri $uri/ =404; }}
+    }}
+    server {{
+        listen unix:/opt/remnanode/fallback-sockets/h2.sock{h2listen};
+{h2on}\
+        server_name {s['domain']};
+        root /var/www/decoy;
+        index index.html;
+        location / {{ try_files $uri $uri/ =404; }}
+    }}
+}}
+'''
+
+
+def compose(s):
+    # JSON is valid YAML; it avoids shell/YAML/Compose interpolation of user input.
+    common = {'restart': 'unless-stopped', 'network_mode': 'host',
+              'logging': {'driver': 'json-file', 'options': {'max-size': '10m', 'max-file': '3'}},
+              'labels': {'com.cheburnet.vision.managed': '1'}}
+    return {'name': 'cheburnet-vision', 'services': {
+        'remnanode': {**common, 'container_name': 'remnanode', 'hostname': 'remnanode',
+                     'user': '0:0',
+                     'image': NODE_IMAGE, 'env_file': ['./node.env'],
+                     'cap_add': ['NET_ADMIN'],
+                     'security_opt': ['no-new-privileges:true'],
+                     # Matches NOFILE_TARGET in the pinned CheburNET tuning v1.0.0.
+                     # Installer provisions it before first start, check() verifies the result.
+                     'ulimits': {'nofile': {'soft': 1048576, 'hard': 1048576}},
+                     'volumes': ['/etc/letsencrypt:/etc/letsencrypt:ro',
+                                 './fallback-sockets:/run/xray-fallback:ro',
+                                 './vision-config-profile.json:/opt/cheburnet/profile.json:ro']},
+    }}
+
+
+def validate_key(key):
+    # Do not strip or silently repair a damaged secret. Pass the exact bytes to Docker.
+    if not key or len(key) > 65536 or not re.fullmatch(r'[A-Za-z0-9+/=_-]+', key):
+        raise ValueError('SECRET_KEY должен быть одной строкой Base64 из панели.')
+    try:
+        data = json.loads(base64.b64decode(key + '=' * (-len(key) % 4), altchars=b'-_', validate=True))
+        fields = ('caCertPem', 'nodeCertPem', 'nodeKeyPem', 'jwtPublicKey')
+        if not isinstance(data, dict) or not all(isinstance(data.get(k), str) and data[k] for k in fields):
+            raise ValueError()
+    except (ValueError, UnicodeError) as e:
+        raise ValueError('Неверная структура SECRET_KEY; скопируйте полный ключ из панели.') from e
+    with tempfile.TemporaryDirectory() as directory:
+        p = Path(directory)
+        for field in fields:
+            value = data[field].replace('\\n', '\n').replace('\r\n', '\n').strip() + '\n'
+            write(p / field, value)
+        def check(*args):
+            r = subprocess.run(['openssl', *map(str, args)], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            if r.returncode:
+                raise ValueError('Ключ ноды: сертификат/подпись/срок/приватный ключ не прошёл проверку.')
+            return r.stdout
+        check('verify', '-CAfile', p/'caCertPem', p/'caCertPem', p/'nodeCertPem')
+        check('x509', '-in', p/'nodeCertPem', '-checkend', '0', '-noout')
+        public = check('x509', '-in', p/'nodeCertPem', '-pubkey', '-noout')
+        actual = check('pkey', '-in', p/'nodeKeyPem', '-pubout')
+        if public != actual:
+            raise ValueError('Приватный ключ ноды не соответствует её сертификату.')
+        check('pkey', '-pubin', '-in', p/'jwtPublicKey', '-noout')
+    return key
+
+
+def render(s, target, key=None):
+    s = validate(s)
+    target = Path(target)
+    target.mkdir(parents=True, exist_ok=True, mode=0o700)
+    json_write(target/'settings.json', s)
+    json_write(target/'vision-config-profile.json', profile(s))
+    json_write(target/'docker-compose.yml', compose(s))
+    write(target/'nginx.conf', nginx(s), 0o644)
+    if key is not None:
+        validate_key(key)
+        write(target/'node.env', f"NODE_PORT={s['node_port']}\nSECRET_KEY={key}\nSNI_VERIFICATION=true\n")
+    else:
+        write(target/'node.env', f"NODE_PORT={s['node_port']}\nSECRET_KEY=REPLACE_WITH_PANEL_SECRET\nSNI_VERIFICATION=true\n")
+    host = f'''⚙ НАСТРОЙКИ ХОСТА В ПАНЕЛИ REMNAWAVE
+
+Выберите профиль ноды.
+
+Адрес:          {s['domain']}
+Порт:           443
+
+Безопасность
+SNI:            {s['domain']}
+Security Layer: TLS (Transport Layer Security)
+Отпечаток:      firefox
+
+Транспорт
+ALPN:           h2,http/1.1
+'''
+    write(target/'host-settings.txt', host)
+
+
+def main():
+    p = argparse.ArgumentParser()
+    p.add_argument('action', choices=['render', 'validate-key', 'collect', 'check-dns'])
+    p.add_argument('--settings')
+    p.add_argument('--output')
+    p.add_argument('--key-file')
+    args = p.parse_args()
+    try:
+        if args.action == 'collect':
+            collect(args.output)
+        elif args.action == 'check-dns':
+            preflight_dns(validate(json.loads(Path(args.settings).read_text())))
+        elif args.action == 'validate-key':
+            validate_key(Path(args.key_file).read_text().rstrip('\n'))
+        else:
+            key = Path(args.key_file).read_text().rstrip('\n') if args.key_file else None
+            render(json.loads(Path(args.settings).read_text()), args.output, key)
+    except (ValueError, KeyError, OSError, subprocess.TimeoutExpired) as e:
+        print(f'Ошибка: {e}', file=sys.stderr)
+        sys.exit(2)
+    except (EOFError, KeyboardInterrupt):
+        print('\nВвод отменён; конфигурация не сохранена.', file=sys.stderr)
+        sys.exit(2)
+
+
+if __name__ == '__main__':
+    main()

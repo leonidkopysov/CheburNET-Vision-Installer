@@ -1,9 +1,21 @@
-# Сторонние компоненты
+# Сторонние источники и общие пакеты
 
-ЧебурNET Vision Installer объединяет собственную логику установки с открытыми или внешними компонентами. Каждый такой компонент сохраняет собственную лицензию и авторские права.
+## Источники списков блокировки
 
-Основные зависимости: Remnawave Node, Xray-core, Docker Engine и Compose, nginx, Certbot, OpenSSL, systemd, UFW, Fail2ban и пакеты Ubuntu/Debian.
+- [antiscanner.list](https://raw.githubusercontent.com/shadow-netlab/traffic-guard-lists/refs/heads/main/public/antiscanner.list)
+- [government_networks.list](https://raw.githubusercontent.com/shadow-netlab/traffic-guard-lists/refs/heads/main/public/government_networks.list)
+- [skipa.list](https://raw.githubusercontent.com/shadow-netlab/traffic-guard-lists/refs/heads/main/public/skipa.list)
 
-В установщик включён зафиксированный снимок ЧебурNET Auto Tuning. Опциональный TrafficGuard и его списки загружаются из внешних репозиториев только после выбора пользователя.
+## Общие пакеты
 
-Лицензия MIT в файле `LICENSE` относится к оригинальному коду ЧебурNET Vision Installer и не заменяет лицензии перечисленных компонентов.
+- [Remnawave Node](https://github.com/remnawave/node)
+- [Xray-core](https://github.com/XTLS/Xray-core)
+- [Docker Engine](https://docs.docker.com/engine/)
+- [nginx](https://nginx.org/)
+- [Certbot](https://certbot.eff.org/)
+- [nftables](https://netfilter.org/projects/nftables/)
+- [UFW](https://launchpad.net/ufw)
+- [Fail2ban](https://github.com/fail2ban/fail2ban)
+- системные пакеты Ubuntu и Debian.
+
+Каждый внешний источник и пакет сохраняет собственную лицензию и авторские права. Лицензия MIT в файле `LICENSE` относится к оригинальному коду ЧебурNET.

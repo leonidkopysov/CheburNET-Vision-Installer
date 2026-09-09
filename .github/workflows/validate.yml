@@ -14,12 +14,29 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Проверка синтаксиса Bash
-        run: bash -n cheburnet-vision-install.sh
-      - name: Проверка контрольной суммы
-        run: sha256sum -c SHA256SUMS
+
+      - name: Проверка Python-тестов
+        run: python3 -m unittest discover -s tests -p 'test_*.py' -v
+
+      - name: Воспроизводимая сборка
+        run: |
+          cp cheburnet-vision-install.sh /tmp/installer.before
+          cp SHA256SUMS /tmp/SHA256SUMS.before
+          python3 build.py
+          cmp /tmp/installer.before cheburnet-vision-install.sh
+          cmp /tmp/SHA256SUMS.before SHA256SUMS
+
+      - name: Проверка Bash и SHA-256
+        run: |
+          bash -n src/installer.sh
+          bash -n cheburnet-vision-install.sh
+          sha256sum -c SHA256SUMS
+
       - name: Установка ShellCheck
         run: sudo apt-get update && sudo apt-get install -y shellcheck
-      - name: Проверка ShellCheck
-        run: shellcheck cheburnet-vision-install.sh
 
+      - name: Проверка ShellCheck
+        run: |
+          shellcheck -S warning src/installer.sh cheburnet-vision-install.sh
+          shellcheck -S warning src/acme-firewall.sh src/acme-pre.sh src/acme-post.sh
+          shellcheck -S warning src/hardening.sh src/renew-hook.sh src/check-nofile.sh
