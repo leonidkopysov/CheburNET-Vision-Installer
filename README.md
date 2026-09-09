@@ -212,6 +212,9 @@ Docker-ключ загружается с официального HTTPS-адр�
 | Security | `tls` | TLS завершает Xray |
 | TLS minVersion | `1.3` | TLS 1.2 отклоняется |
 | Flow | `xtls-rprx-vision` | режим Vision |
+| `tcpFastOpen` | `true` | включает TCP Fast Open на входящем сокете Xray |
+| `tcpcongestion` | `bbr` | закрепляет BBR для TCP-соединений inbound |
+| TCP keepalive | idle `60`, interval `30` | обнаруживает потерянные долгоживущие соединения |
 | ALPN | `h2`, `http/1.1` | выбор соответствующего Unix fallback |
 | h2 fallback | `/run/xray-fallback/h2.sock` | HTTP/2-заглушка |
 | h1 fallback | `/run/xray-fallback/h1.sock` | HTTP/1.1-заглушка |
@@ -257,6 +260,12 @@ Docker-ключ загружается с официального HTTPS-адр�
       "streamSettings": {
         "network": "tcp",
         "security": "tls",
+        "sockopt": {
+          "tcpFastOpen": true,
+          "tcpcongestion": "bbr",
+          "tcpKeepAliveIdle": 60,
+          "tcpKeepAliveInterval": 30
+        },
         "tlsSettings": {
           "alpn": ["h2", "http/1.1"],
           "minVersion": "1.3",

@@ -125,7 +125,12 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(inbound['streamSettings']['tlsSettings']['minVersion'], '1.3')
         self.assertTrue(inbound['streamSettings']['tlsSettings']['rejectUnknownSni'])
         self.assertEqual(inbound['settings']['flow'], 'xtls-rprx-vision')
-        self.assertNotIn('sockopt', inbound['streamSettings'])
+        self.assertEqual(inbound['streamSettings']['sockopt'], {
+            'tcpFastOpen': True,
+            'tcpcongestion': 'bbr',
+            'tcpKeepAliveIdle': 60,
+            'tcpKeepAliveInterval': 30,
+        })
 
     def test_bad_secrets(self):
         for secret in ['abc', 'abc\n', '$(id)', 'a b', base64.b64encode(b'{}').decode()]:

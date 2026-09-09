@@ -183,6 +183,12 @@ def profile(s):
                          'destOverride': ['http', 'tls', 'quic']},
             'streamSettings': {
                 'network': 'tcp', 'security': 'tls',
+                'sockopt': {
+                    'tcpFastOpen': True,
+                    'tcpcongestion': 'bbr',
+                    'tcpKeepAliveIdle': 60,
+                    'tcpKeepAliveInterval': 30,
+                },
                 'tlsSettings': {'alpn': ['h2', 'http/1.1'], 'minVersion': '1.3',
                                 'certificates': [{'keyFile': cert + '/privkey.pem',
                                                   'certificateFile': cert + '/fullchain.pem'}],
