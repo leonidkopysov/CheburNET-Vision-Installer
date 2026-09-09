@@ -17,13 +17,13 @@
 
 ## Назначение
 
-ЧебурNET Vision Installer разворачивает отдельную Remnawave-ноду с VLESS TCP/RAW, TLS 1.3 и `xtls-rprx-vision`. Обычный HTTPS-трафик передаётся из Xray в изолированный nginx через два Unix-сокета; nginx не открывает собственных TCP-портов.
+ЧебурNET Vision Installer разворачивает отдельную Remnawave-ноду с VLESS TCP/RAW, TLS 1.3 и XTLS Vision. Валидные VPN-подключения обслуживаются Xray, а обычные HTTPS-запросы направляются в локальный decoy-сайт через изолированный nginx и два Unix-сокета для HTTP/1.1 и HTTP/2. Nginx не имеет собственных TCP-listener’ов, поэтому внешне сервис ведёт себя как обычный HTTPS-сайт на единственном TCP/443.
 
 Установщик дополнительно выполняет полное обновление текущего выпуска ОС, продвинутую настройку сервера, защищает API ноды и по выбору устанавливает ЧебурNET Traffic Control.
 
 ## Что устанавливается
 
-- Remnawave Node `3.4.1` в Docker с образом, закреплённым по digest;
+- Remnawave Node последней стабильной версии на момент выпуска (`3.4.1`) в Docker с образом, закреплённым по digest;
 - Xray с VLESS, TLS 1.3 и режимом Vision;
 - сертификат Let's Encrypt, автоматическое продление и проверка `certbot renew --dry-run`;
 - нейтральный локальный сайт-заглушка;
@@ -35,15 +35,7 @@
 
 ## Схема работы
 
-```mermaid
-flowchart TD
-    C["VLESS-клиент"] -->|"TCP/443 · TLS 1.3"| X["Xray / rw-core"]
-    X -->|"Авторизованный VLESS Vision"| R["DIRECT или BLOCK"]
-    X -->|"ALPN h2"| H2["h2.sock"]
-    X -->|"HTTP/1.1"| H1["h1.sock"]
-    H2 --> N["nginx · нейтральная заглушка"]
-    H1 --> N
-```
+[![Схема VLESS TLS Vision и Unix-Socket Decoy](assets/vless-tls-vision-unix-socket-decoy.jpeg)](assets/vless-tls-vision-unix-socket-decoy.jpeg)
 
 Внешний TCP/443 принадлежит Xray. nginx обслуживает только Unix-сокеты. API RemnaNode слушает заданный порт, но UFW разрешает доступ только исходящим IP панели. Traffic Control применяется последним отдельным слоем nftables.
 
