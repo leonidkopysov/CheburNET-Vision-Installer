@@ -39,7 +39,7 @@ class SecurityTests(unittest.TestCase):
 
     def test_release_version_and_component_order(self):
         installer = (ROOT/'src/installer.sh').read_text(encoding='utf-8')
-        self.assertIn('readonly CHEBURNET_VERSION=1.1.0', installer)
+        self.assertIn('readonly CHEBURNET_VERSION=1.1.1', installer)
         self.assertNotIn('experimental', installer.lower())
         self.assertNotIn('эксперимент', installer.lower())
         sequence = [
@@ -55,7 +55,7 @@ class SecurityTests(unittest.TestCase):
     def test_application_version_is_independent_from_os_release(self):
         installer = (ROOT/'src/installer.sh').read_text(encoding='utf-8')
         self.assertIn('readonly CHEBURNET_VERSION=', installer)
-        self.assertNotIn('\nVERSION=1.1.0-', installer)
+        self.assertNotIn('\nVERSION=1.1.1-', installer)
         self.assertIn('local ID VERSION VERSION_ID VERSION_CODENAME UBUNTU_CODENAME', installer)
 
     def test_manager_source_has_no_payload_placeholder_or_payload_function(self):

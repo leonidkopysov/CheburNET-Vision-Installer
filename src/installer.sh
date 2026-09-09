@@ -10,7 +10,7 @@
 set -Eeuo pipefail
 umask 077
 export LC_ALL=C
-readonly CHEBURNET_VERSION=1.1.0
+readonly CHEBURNET_VERSION=1.1.1
 # Фиксированный каталог используется службами systemd и хуками.
 readonly BASE=/opt/remnanode
 WORK=''
