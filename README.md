@@ -35,7 +35,11 @@
 
 ## Схема работы
 
-[![Схема VLESS TLS Vision и Unix-Socket Decoy](assets/vless-tls-vision-unix-socket-decoy.jpeg)](assets/vless-tls-vision-unix-socket-decoy.jpeg)
+<p align="center">
+  <a href="assets/vless-tls-vision-unix-socket-decoy.jpeg">
+    <img src="assets/vless-tls-vision-unix-socket-decoy.jpeg" alt="Схема VLESS TLS Vision и Unix-Socket Decoy" width="100%">
+  </a>
+</p>
 
 Внешний TCP/443 принадлежит Xray. nginx обслуживает только Unix-сокеты. API RemnaNode слушает заданный порт, но UFW разрешает доступ только исходящим IP панели. Traffic Control применяется последним отдельным слоем nftables.
 
@@ -94,6 +98,12 @@ sha256sum -c SHA256SUMS && bash ./cheburnet-vision-install.sh
 
 Встроенный ЧебурNET Auto Tuning рассчитывает настройки по CPU и RAM и применяет их до первого запуска API:
 
+<p align="center">
+  <a href="assets/auto-tuning-scheme.jpeg">
+    <img src="assets/auto-tuning-scheme.jpeg" alt="Схема работы ЧебурNET Auto Tuning" width="100%">
+  </a>
+</p>
+
 - включает BBR и целевой `fq`, настраивает TCP/UDP-буферы, backlog и SYN backlog;
 - рассчитывает `conntrack`, диапазон временных портов и безопасные сетевые параметры;
 - создаёт и дважды проверяет ZRAM, добавляет безопасные VM-настройки;
@@ -116,7 +126,13 @@ sha256sum -c SHA256SUMS && bash ./cheburnet-vision-install.sh
 
 ## Traffic Control
 
-ЧебурNET Traffic Control — дополнительная фильтрация входящего трафика через отдельную таблицу nftables. Устанавливается только после согласия пользователя.
+ЧебурNET Traffic Control — утилита сетевой защиты Linux-сервера от автоматического сканирования портов и нежелательных подключений. Блокирует известные IP-адреса и подсети сканеров на уровне `nftables`, включая сети российских государственных структур, Роскомнадзора и связанных с ними организаций при использовании соответствующих списков блокировки. Поддерживает IPv4/IPv6, три внешних списка, логирование и статистику срабатываний. Устанавливается только после согласия пользователя.
+
+<p align="center">
+  <a href="assets/traffic-control-scheme.jpeg">
+    <img src="assets/traffic-control-scheme.jpeg" alt="Схема работы ЧебурNET Traffic Control" width="100%">
+  </a>
+</p>
 
 Компонент:
 
