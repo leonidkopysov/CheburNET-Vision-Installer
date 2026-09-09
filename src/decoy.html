@@ -18,6 +18,33 @@ dialog{width:min(780px,calc(100% - 32px));max-height:88vh;max-height:88dvh;paddi
 @media(max-width:960px){.hero{gap:30px}.cover{min-height:440px}.cover-bottom{margin-top:240px}.cover-art{width:290px;height:290px}.grid{grid-template-columns:repeat(2,minmax(0,1fr))}.pause{gap:30px;padding:36px}.hero h1{font-size:60px}}
 @media(max-width:680px){.wrap{width:calc(100% - 40px)}header{padding:22px 0;align-items:start;flex-direction:column;gap:12px}nav{width:100%;justify-content:space-between;gap:12px}nav a{font-size:14px}.hero{grid-template-columns:1fr;padding:46px 0;gap:36px}.hero h1{font-size:clamp(44px,10vw,66px)}.lead{font-size:17px}.cover{min-height:420px;padding:24px}.cover-bottom{margin-top:240px}.cover-bottom h2{font-size:32px}.manifest{grid-template-columns:1fr;gap:12px;padding:26px 0}.manifest p{font-size:16px}.section{padding:52px 0}.section-head{display:block}.section-head p{margin-top:14px}.grid{grid-template-columns:1fr;gap:16px}.story summary{min-height:310px;padding:24px}.story-index{margin-top:18px}.pause{grid-template-columns:1fr;padding:28px;gap:26px;margin-bottom:52px}.about{grid-template-columns:1fr;gap:24px;padding:42px 0}.reader-bar{padding:12px 16px}.reader-bar>span{max-width:100px}.reader-body{padding:28px 24px 36px}footer{gap:12px}.hero-foot{font-size:12px}.filters{gap:6px}.filter{padding:9px 14px}}
 @media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}*,*:before,*:after{animation:none!important;transition:none!important}}
+
+/* Decorative motion never changes the reading layout */
+.hero{position:relative;isolation:isolate}
+.hero:before{content:"";position:absolute;inset:-30px -15px 0;background:radial-gradient(ellipse at 72% 35%,#b6dd7720,transparent 55%);z-index:-1;pointer-events:none}
+.parallax-layer{position:absolute;inset:0;pointer-events:none;transform:translate3d(var(--parallax-x,0px),calc(var(--parallax-y,0px) + var(--parallax-scroll,0px)),0)}
+.cover,.story{position:relative;isolation:isolate}
+.cover:before,.story:before{content:"";position:absolute;inset:0;z-index:0;pointer-events:none;opacity:0;background:radial-gradient(280px circle at var(--glow-x,50%) var(--glow-y,40%),#d7ef9e22,transparent 75%);transition:opacity .4s}
+.cover:hover:before,.story:hover:before,.story:focus-within:before{opacity:1}
+.story summary,.story>.article-text{position:relative;z-index:1}
+.cover{box-shadow:0 18px 70px #0002;transition:border-color .4s,box-shadow .4s}
+.cover:hover{border-color:#71845a;box-shadow:0 20px 80px #b5d77416}
+.story:hover,.story:focus-within{box-shadow:0 10px 34px #b5d7740c}
+.button{box-shadow:0 0 0 #d7ef9e00;transition:transform .25s,background .25s,box-shadow .35s}
+.button:hover,.button:focus-visible{box-shadow:0 0 32px #d7ef9e33}
+.story .read span,.button span,.text-link span{display:inline-block;transition:transform .3s}
+.story:hover .read span,.button:hover span,.text-link:hover span{transform:translate(3px,-3px)}
+.brand span{transition:text-shadow .35s}.brand:hover span{text-shadow:0 0 20px #d7ef9e66}
+.story.filter-enter{animation:enter .4s both;animation-delay:var(--reveal-delay,0ms)}
+.reveal.is-visible{animation-delay:var(--reveal-delay,0ms)}
+dialog.is-closing{animation:reader-exit .18s ease-in both}
+dialog.is-closing::backdrop{animation:backdrop-exit .18s ease-in both}
+@keyframes reader-exit{to{opacity:0;transform:translateY(12px) scale(.985)}}
+@keyframes backdrop-exit{to{opacity:0}}
+@keyframes soft-glow{50%{box-shadow:0 0 95px #d7ef9e50}}
+@media(prefers-reduced-motion:no-preference){.cover-center{animation:soft-glow 6s ease-in-out 3}.hero>div:first-child{animation:enter .7s ease-out}.cover{animation:enter .9s ease-out}}
+@media(hover:none){.cover:before{opacity:.45}.story:hover{transform:none}}
+@media(prefers-reduced-motion:reduce){.parallax-layer{transform:none!important}.cover-art{animation:none!important}.story:hover,.button:hover{transform:none}.story .read span,.button span,.text-link span{transform:none!important}dialog.is-closing,dialog.is-closing::backdrop{animation:none!important}}
 </style>
 </head>
 <body>
@@ -27,46 +54,46 @@ dialog{width:min(780px,calc(100% - 32px));max-height:88vh;max-height:88dvh;paddi
 <header><a class="brand" href="#top">Тихая<span>Среда</span><small>Журнал о цифровой культуре</small></a><nav aria-label="Основная навигация"><a href="#ideas">Материалы</a><a href="#notes">На заметку</a><a href="#about">О журнале</a></nav></header>
 <main id="main">
 <section class="hero" aria-labelledby="hero-title">
-<div><p class="eyebrow">Дизайн · технологии · повседневность</p><h1 id="hero-title">Меньше шума.<br>Больше <em>смысла.</em></h1><p class="lead">Мир не обязан становиться быстрее, чтобы быть интереснее. Замечаем детали, разбираемся в технологиях и учимся беречь своё внимание.</p><a class="button" href="#ideas">Выбрать, что почитать <span aria-hidden="true">↗</span></a><div class="hero-foot">Небольшие тексты. Без спешки и лишних вкладок.</div></div>
-<div class="cover"><div class="cover-meta"><span>В фокусе</span><span>Эссе / внимание</span></div><div class="cover-art" aria-hidden="true"><div class="ring"></div><div class="ring"></div><div class="ring"></div><div class="cover-center"></div></div><div class="cover-bottom"><h2>Внимание — тоже пространство.</h2><a class="text-link" href="#attention" data-read="attention">Читать материал <span aria-hidden="true">↗</span></a></div></div>
+<div><p class="eyebrow">Дизайн · технологии · повседневность</p><h1 id="hero-title">Меньше шума<br>Больше <em>смысла</em></h1><p class="lead">Мир не обязан становиться быстрее, чтобы быть интереснее Замечаем детали, разбираемся в технологиях и учимся беречь своё внимание</p><a class="button" href="#ideas">Выбрать, что почитать <span aria-hidden="true">↗</span></a><div class="hero-foot">Небольшие тексты Без спешки и лишних вкладок</div></div>
+<div class="cover"><div class="cover-meta"><span>В фокусе</span><span>Эссе / внимание</span></div><div class="parallax-layer"><div class="cover-art" aria-hidden="true"><div class="ring"></div><div class="ring"></div><div class="ring"></div><div class="cover-center"></div></div></div><div class="cover-bottom"><h2>Внимание — тоже пространство</h2><a class="text-link" href="#attention" data-read="attention">Читать материал <span aria-hidden="true">↗</span></a></div></div>
 </section>
-<div class="manifest"><p class="eyebrow">В центре — человек</p><p>Нас интересует не очередной инструмент, а то, как он меняет жизнь. Хороший дизайн помогает разобраться. Хорошая технология оставляет время на главное.</p></div>
+<div class="manifest"><p class="eyebrow">В центре — человек</p><p>Нас интересует не очередной инструмент, а то, как он меняет жизнь Хороший дизайн помогает разобраться Хорошая технология оставляет время на главное</p></div>
 <section class="section" id="ideas" aria-labelledby="ideas-title">
 <div class="section-head"><div><p class="eyebrow">Редакционная подборка</p><h2 id="ideas-title">Идеи для спокойного дня</h2></div><p id="result-count" aria-live="polite">6 материалов для вдумчивого чтения</p></div>
 <div class="filters" role="group" aria-label="Темы материалов" hidden><button class="filter" type="button" data-filter="all" aria-pressed="true">Все материалы</button><button class="filter" type="button" data-filter="design" aria-pressed="false">Дизайн</button><button class="filter" type="button" data-filter="attention" aria-pressed="false">Внимание</button><button class="filter" type="button" data-filter="technology" aria-pressed="false">Технологии</button></div>
 <div class="grid">
-<details class="story reveal" id="attention" data-topic="attention"><summary><span class="story-meta"><span>Внимание</span><span>Эссе</span></span><span class="story-index" aria-hidden="true">01</span><h3>Внимание — тоже пространство</h3><p class="excerpt">Почему свободное место нужно не только на рабочем столе, но и в голове.</p><span class="read">Открыть материал <span aria-hidden="true">↗</span></span></summary><div class="article-text">
-<p>Утро часто начинается не с собственного решения, а с чужого сообщения. Мы открываем экран, чтобы посмотреть время, и незаметно оказываемся в потоке новостей, рабочих вопросов и рекомендаций. Каждая из них по отдельности может быть полезной. Трудность — в их количестве.</p><h4>Не всё требует ответа сейчас</h4><p>Уведомление создаёт ощущение срочности, но не определяет важность. Попробуйте разделить входящие на два простых потока: то, что действительно требует быстрого ответа, и то, к чему можно вернуться в выбранное время. Для первого оставьте заметный сигнал, для второго — спокойный список.</p><p>Важна не идеальная дисциплина, а понятное правило. Например, сообщения от близких остаются доступными, а информационные каналы не прерывают работу. Так инструмент продолжает помогать, не назначая повестку каждой минуты.</p><blockquote>Свободное внимание — это возможность самому решить, что будет следующим.</blockquote><h4>Одна небольшая граница</h4><p>Выберите короткий отрезок дня без переключений: утренний кофе, прогулку или двадцать минут чтения. Не превращайте его в ещё одну задачу с отчётом. Достаточно заметить, как меняется ощущение времени, когда оно не разрезано на десятки маленьких ответов.</p><p>Начать можно прямо сегодня: уберите одно необязательное уведомление и оставьте на первом экране только то, к чему хотите обращаться намеренно.</p>
+<details class="story reveal" id="attention" data-topic="attention"><summary><span class="story-meta"><span>Внимание</span><span>Эссе</span></span><span class="story-index" aria-hidden="true">01</span><h3>Внимание — тоже пространство</h3><p class="excerpt">Почему свободное место нужно не только на рабочем столе, но и в голове</p><span class="read">Открыть материал <span aria-hidden="true">↗</span></span></summary><div class="article-text">
+<p>Утро часто начинается не с собственного решения, а с чужого сообщения Мы открываем экран, чтобы посмотреть время, и незаметно оказываемся в потоке новостей, рабочих вопросов и рекомендаций Каждая из них по отдельности может быть полезной Трудность — в их количестве</p><h4>Не всё требует ответа сейчас</h4><p>Уведомление создаёт ощущение срочности, но не определяет важность Попробуйте разделить входящие на два простых потока: то, что действительно требует быстрого ответа, и то, к чему можно вернуться в выбранное время Для первого оставьте заметный сигнал, для второго — спокойный список</p><p>Важна не идеальная дисциплина, а понятное правило Например, сообщения от близких остаются доступными, а информационные каналы не прерывают работу Так инструмент продолжает помогать, не назначая повестку каждой минуты</p><blockquote>Свободное внимание — это возможность самому решить, что будет следующим</blockquote><h4>Одна небольшая граница</h4><p>Выберите короткий отрезок дня без переключений: утренний кофе, прогулку или двадцать минут чтения Не превращайте его в ещё одну задачу с отчётом Достаточно заметить, как меняется ощущение времени, когда оно не разрезано на десятки маленьких ответов</p><p>Начать можно прямо сегодня: уберите одно необязательное уведомление и оставьте на первом экране только то, к чему хотите обращаться намеренно</p>
 </div></details>
-<details class="story reveal" id="space" data-topic="design"><summary><span class="story-meta"><span>Дизайн</span><span>Наблюдение</span></span><span class="story-index" aria-hidden="true">02</span><h3>Что делает пустое место</h3><p class="excerpt">Поля, паузы и расстояния: невидимая часть понятного интерфейса.</p><span class="read">Открыть материал <span aria-hidden="true">↗</span></span></summary><div class="article-text">
-<p>На хорошо собранной странице легко понять, с чего начать. Причина не всегда в ярком заголовке. Часто направление задают расстояния: между буквами, строками, карточками и разделами. Свободное место работает как тихий указатель.</p><h4>Близость создаёт связь</h4><p>Подпись рядом с полем воспринимается как его часть. Кнопка, отделённая от соседних элементов, выглядит самостоятельным действием. Если все расстояния одинаковы, человеку приходится заново выяснять, что к чему относится.</p><p>Полезный приём — сначала сгруппировать связанное, а потом отделить группы друг от друга. Внутри карточки расстояние между названием и описанием может быть небольшим, между двумя карточками — больше, а перед новым разделом — ещё заметнее.</p><h4>Ритм вместо случайных отступов</h4><p>Выберите небольшой набор расстояний и повторяйте их. Такая сетка не делает страницу скучной: она создаёт основу, на которой крупный заголовок или необычная композиция выглядят намеренно, а не случайно.</p><blockquote>Пустота не отнимает содержание. Она даёт ему место.</blockquote><p>Проверьте любой собственный документ: уберите лишнюю рамку, увеличьте расстояние между разделами и сократите длинный абзац. Иногда для ясности не нужно добавлять ничего нового.</p>
+<details class="story reveal" id="space" data-topic="design"><summary><span class="story-meta"><span>Дизайн</span><span>Наблюдение</span></span><span class="story-index" aria-hidden="true">02</span><h3>Что делает пустое место</h3><p class="excerpt">Поля, паузы и расстояния: невидимая часть понятного интерфейса</p><span class="read">Открыть материал <span aria-hidden="true">↗</span></span></summary><div class="article-text">
+<p>На хорошо собранной странице легко понять, с чего начать Причина не всегда в ярком заголовке Часто направление задают расстояния: между буквами, строками, карточками и разделами Свободное место работает как тихий указатель</p><h4>Близость создаёт связь</h4><p>Подпись рядом с полем воспринимается как его часть Кнопка, отделённая от соседних элементов, выглядит самостоятельным действием Если все расстояния одинаковы, человеку приходится заново выяснять, что к чему относится</p><p>Полезный приём — сначала сгруппировать связанное, а потом отделить группы друг от друга Внутри карточки расстояние между названием и описанием может быть небольшим, между двумя карточками — больше, а перед новым разделом — ещё заметнее</p><h4>Ритм вместо случайных отступов</h4><p>Выберите небольшой набор расстояний и повторяйте их Такая сетка не делает страницу скучной: она создаёт основу, на которой крупный заголовок или необычная композиция выглядят намеренно, а не случайно</p><blockquote>Пустота не отнимает содержание Она даёт ему место</blockquote><p>Проверьте любой собственный документ: уберите лишнюю рамку, увеличьте расстояние между разделами и сократите длинный абзац Иногда для ясности не нужно добавлять ничего нового</p>
 </div></details>
-<details class="story reveal" id="tools" data-topic="technology"><summary><span class="story-meta"><span>Технологии</span><span>Практика</span></span><span class="story-index" aria-hidden="true">03</span><h3>Инструменты, которые не мешают</h3><p class="excerpt">Как выбирать приложения по своим задачам, а не по длине списка функций.</p><span class="read">Открыть материал <span aria-hidden="true">↗</span></span></summary><div class="article-text">
-<p>Новое приложение обещает порядок. Но вместе с ним появляются настройки, отдельный вход, ещё одно место для файлов и привычка проверять обновления. Полезно заранее спросить: какую конкретную трудность оно снимет?</p><h4>Проверьте один настоящий сценарий</h4><p>Не пытайтесь оценить все возможности сразу. Возьмите обычную задачу: найти прошлую заметку, передать документ или составить план на завтра. Пройдите весь путь, включая возвращение к результату через несколько дней.</p><ul><li>Понятно ли, где хранится ваша работа?</li><li>Можно ли забрать данные в распространённом формате?</li><li>Что останется доступным без подключения к сети?</li><li>Нужны ли вам ежедневные настройки, чтобы инструмент оставался удобным?</li></ul><h4>Считайте не только возможности</h4><p>Стоимость инструмента — это ещё и время на обучение, перенос информации и обслуживание. Иногда знакомое простое решение полезнее нового универсального, если задача уже выполняется без лишних усилий.</p><p>Дайте новому приложению одну роль и небольшой испытательный срок. Если оно не стало частью повседневной работы, отказаться от него — нормальное решение, а не упущенная возможность.</p>
+<details class="story reveal" id="tools" data-topic="technology"><summary><span class="story-meta"><span>Технологии</span><span>Практика</span></span><span class="story-index" aria-hidden="true">03</span><h3>Инструменты, которые не мешают</h3><p class="excerpt">Как выбирать приложения по своим задачам, а не по длине списка функций</p><span class="read">Открыть материал <span aria-hidden="true">↗</span></span></summary><div class="article-text">
+<p>Новое приложение обещает порядок Но вместе с ним появляются настройки, отдельный вход, ещё одно место для файлов и привычка проверять обновления Полезно заранее спросить: какую конкретную трудность оно снимет?</p><h4>Проверьте один настоящий сценарий</h4><p>Не пытайтесь оценить все возможности сразу Возьмите обычную задачу: найти прошлую заметку, передать документ или составить план на завтра Пройдите весь путь, включая возвращение к результату через несколько дней</p><ul><li>Понятно ли, где хранится ваша работа?</li><li>Можно ли забрать данные в распространённом формате?</li><li>Что останется доступным без подключения к сети?</li><li>Нужны ли вам ежедневные настройки, чтобы инструмент оставался удобным?</li></ul><h4>Считайте не только возможности</h4><p>Стоимость инструмента — это ещё и время на обучение, перенос информации и обслуживание Иногда знакомое простое решение полезнее нового универсального, если задача уже выполняется без лишних усилий</p><p>Дайте новому приложению одну роль и небольшой испытательный срок Если оно не стало частью повседневной работы, отказаться от него — нормальное решение, а не упущенная возможность</p>
 </div></details>
-<details class="story reveal" id="words" data-topic="design"><summary><span class="story-meta"><span>Дизайн</span><span>Разбор</span></span><span class="story-index" aria-hidden="true">04</span><h3>Понятный текст — часть дизайна</h3><p class="excerpt">Что общего у хорошей подписи к кнопке и спокойного человеческого разговора.</p><span class="read">Открыть материал <span aria-hidden="true">↗</span></span></summary><div class="article-text">
-<p>Интерфейс разговаривает с человеком даже тогда, когда в нём всего несколько слов. «Продолжить» может быть удобно в знакомом процессе, но перед важным действием лучше сказать, что именно произойдёт.</p><h4>Начните с вопроса читателя</h4><p>На экране ошибки человек обычно хочет узнать три вещи: что случилось, сохранилась ли его работа и что делать дальше. Фраза «Не удалось сохранить заметку. Текст остался на экране. Проверьте подключение и повторите попытку» отвечает на них лучше, чем абстрактное «Произошла ошибка».</p><p>Точность не требует канцелярского языка. «Скачать документ» яснее, чем «Осуществить выгрузку», а «Удалить черновик» конкретнее, чем «Подтвердить операцию». Знакомые слова уменьшают усилие, необходимое для решения.</p><h4>Прочитайте вслух</h4><p>Если фраза звучит неестественно в разговоре, попробуйте её упростить. Уберите повторения, длинные вводные обороты и информацию, которая не помогает следующему действию.</p><blockquote>Хорошая подпись объясняет действие до нажатия, а не после него.</blockquote><p>Сохраните одинаковые названия для одинаковых сущностей. Когда один и тот же документ называется то «файлом», то «объектом», то «материалом», читателю приходится проверять, не изменился ли смысл.</p>
+<details class="story reveal" id="words" data-topic="design"><summary><span class="story-meta"><span>Дизайн</span><span>Разбор</span></span><span class="story-index" aria-hidden="true">04</span><h3>Понятный текст — часть дизайна</h3><p class="excerpt">Что общего у хорошей подписи к кнопке и спокойного человеческого разговора</p><span class="read">Открыть материал <span aria-hidden="true">↗</span></span></summary><div class="article-text">
+<p>Интерфейс разговаривает с человеком даже тогда, когда в нём всего несколько слов «Продолжить» может быть удобно в знакомом процессе, но перед важным действием лучше сказать, что именно произойдёт</p><h4>Начните с вопроса читателя</h4><p>На экране ошибки человек обычно хочет узнать три вещи: что случилось, сохранилась ли его работа и что делать дальше Фраза «Не удалось сохранить заметку Текст остался на экране Проверьте подключение и повторите попытку» отвечает на них лучше, чем абстрактное «Произошла ошибка»</p><p>Точность не требует канцелярского языка «Скачать документ» яснее, чем «Осуществить выгрузку», а «Удалить черновик» конкретнее, чем «Подтвердить операцию» Знакомые слова уменьшают усилие, необходимое для решения</p><h4>Прочитайте вслух</h4><p>Если фраза звучит неестественно в разговоре, попробуйте её упростить Уберите повторения, длинные вводные обороты и информацию, которая не помогает следующему действию</p><blockquote>Хорошая подпись объясняет действие до нажатия, а не после него</blockquote><p>Сохраните одинаковые названия для одинаковых сущностей Когда один и тот же документ называется то «файлом», то «объектом», то «материалом», читателю приходится проверять, не изменился ли смысл</p>
 </div></details>
-<details class="story reveal" id="cleanup" data-topic="attention"><summary><span class="story-meta"><span>Внимание</span><span>Практика</span></span><span class="story-index" aria-hidden="true">05</span><h3>Цифровая уборка без марафона</h3><p class="excerpt">Одна папка, четверть часа и порядок, который действительно можно поддерживать.</p><span class="read">Открыть материал <span aria-hidden="true">↗</span></span></summary><div class="article-text">
-<p>Желание разобрать все файлы за вечер часто заканчивается новой папкой «Разобрать потом». Более устойчивый подход — выбрать маленькую область и понятный критерий завершения.</p><h4>Начните с места, которым пользуетесь</h4><p>Это может быть папка загрузок или рабочий стол. Не трогайте сразу семейный архив и важные документы. Сначала наведите порядок там, где результат будет заметен уже завтра.</p><ol><li>Отделите текущую работу от завершённой.</li><li>Дайте важным файлам названия, по которым их можно найти без открытия.</li><li>Перенесите сомнительное в отдельную папку для проверки, не удаляя сразу.</li><li>Убедитесь, что незаменимые материалы имеют резервную копию.</li></ol><h4>Оставьте простое правило</h4><p>Сложное дерево папок быстро становится второй работой. Часто хватает нескольких категорий: текущие проекты, справочные материалы и архив. Дата в названии поможет различить версии там, где это действительно важно.</p><p>Остановитесь через пятнадцать минут. Цель — не доказать, что у вас идеальный порядок, а немного упростить следующее обращение к своим материалам.</p>
+<details class="story reveal" id="cleanup" data-topic="attention"><summary><span class="story-meta"><span>Внимание</span><span>Практика</span></span><span class="story-index" aria-hidden="true">05</span><h3>Цифровая уборка без марафона</h3><p class="excerpt">Одна папка, четверть часа и порядок, который действительно можно поддерживать</p><span class="read">Открыть материал <span aria-hidden="true">↗</span></span></summary><div class="article-text">
+<p>Желание разобрать все файлы за вечер часто заканчивается новой папкой «Разобрать потом» Более устойчивый подход — выбрать маленькую область и понятный критерий завершения</p><h4>Начните с места, которым пользуетесь</h4><p>Это может быть папка загрузок или рабочий стол Не трогайте сразу семейный архив и важные документы Сначала наведите порядок там, где результат будет заметен уже завтра</p><ol><li>Отделите текущую работу от завершённой</li><li>Дайте важным файлам названия, по которым их можно найти без открытия</li><li>Перенесите сомнительное в отдельную папку для проверки, не удаляя сразу</li><li>Убедитесь, что незаменимые материалы имеют резервную копию</li></ol><h4>Оставьте простое правило</h4><p>Сложное дерево папок быстро становится второй работой Часто хватает нескольких категорий: текущие проекты, справочные материалы и архив Дата в названии поможет различить версии там, где это действительно важно</p><p>Остановитесь через пятнадцать минут Цель — не доказать, что у вас идеальный порядок, а немного упростить следующее обращение к своим материалам</p>
 </div></details>
-<details class="story reveal" id="offline" data-topic="technology"><summary><span class="story-meta"><span>Технологии</span><span>Наблюдение</span></span><span class="story-index" aria-hidden="true">06</span><h3>Право на небольшую паузу</h3><p class="excerpt">Почему хороший цифровой сервис должен спокойно переживать наше отсутствие.</p><span class="read">Открыть материал <span aria-hidden="true">↗</span></span></summary><div class="article-text">
-<p>Мы привыкли оценивать сервисы по скорости ответа. Но есть и другой важный вопрос: насколько легко к ним вернуться после перерыва? Помнит ли редактор место остановки, понятен ли незаконченный процесс, можно ли продолжить без повторного ввода?</p><h4>Продолжение важнее постоянного присутствия</h4><p>Удобная система не требует держать весь контекст в голове. Она показывает последний шаг, отделяет черновик от готового результата и не превращает отсутствие в ошибку.</p><p>Эту идею можно перенести и в собственную работу. Перед паузой оставьте себе короткую заметку: что сделано, какой вопрос остался и с чего начать. Несколько предложений экономят время на повторное погружение.</p><h4>Не каждая серия должна продолжаться</h4><p>Счётчики дней и напоминания иногда помогают выстроить привычку. Но если сохранение серии становится важнее самого занятия, полезно пересмотреть правило. Инструмент должен поддерживать цель, а не подменять её.</p><blockquote>Хорошая цифровая среда остаётся удобной и тогда, когда мы смотрим в другую сторону.</blockquote><p>Выбирая сервис, обратите внимание на возвращение: найдёте ли вы свой результат через неделю так же легко, как через пять минут?</p>
+<details class="story reveal" id="offline" data-topic="technology"><summary><span class="story-meta"><span>Технологии</span><span>Наблюдение</span></span><span class="story-index" aria-hidden="true">06</span><h3>Право на небольшую паузу</h3><p class="excerpt">Почему хороший цифровой сервис должен спокойно переживать наше отсутствие</p><span class="read">Открыть материал <span aria-hidden="true">↗</span></span></summary><div class="article-text">
+<p>Мы привыкли оценивать сервисы по скорости ответа Но есть и другой важный вопрос: насколько легко к ним вернуться после перерыва? Помнит ли редактор место остановки, понятен ли незаконченный процесс, можно ли продолжить без повторного ввода?</p><h4>Продолжение важнее постоянного присутствия</h4><p>Удобная система не требует держать весь контекст в голове Она показывает последний шаг, отделяет черновик от готового результата и не превращает отсутствие в ошибку</p><p>Эту идею можно перенести и в собственную работу Перед паузой оставьте себе короткую заметку: что сделано, какой вопрос остался и с чего начать Несколько предложений экономят время на повторное погружение</p><h4>Не каждая серия должна продолжаться</h4><p>Счётчики дней и напоминания иногда помогают выстроить привычку Но если сохранение серии становится важнее самого занятия, полезно пересмотреть правило Инструмент должен поддерживать цель, а не подменять её</p><blockquote>Хорошая цифровая среда остаётся удобной и тогда, когда мы смотрим в другую сторону</blockquote><p>Выбирая сервис, обратите внимание на возвращение: найдёте ли вы свой результат через неделю так же легко, как через пять минут?</p>
 </div></details>
 </div>
 </section>
-<aside class="pause reveal"><div><p class="eyebrow">Мысль на полях</p><blockquote>Не всё, что можно ускорить, стоит ускорять.</blockquote></div><div class="pause-caption">Иногда лучший следующий шаг — дочитать абзац, закончить одну мысль и только потом открыть новую вкладку. Оставьте себе немного свободного пространства.</div></aside>
+<aside class="pause reveal"><div><p class="eyebrow">Мысль на полях</p><blockquote>Не всё, что можно ускорить, стоит ускорять</blockquote></div><div class="pause-caption">Иногда лучший следующий шаг — дочитать абзац, закончить одну мысль и только потом открыть новую вкладку Оставьте себе немного свободного пространства</div></aside>
 <section class="section notes" id="notes" aria-labelledby="notes-title"><div class="section-head"><div><p class="eyebrow">На заметку</p><h2 id="notes-title">Маленькие перемены</h2></div><p>То, что можно попробовать сегодня</p></div>
-<details class="note"><summary>Как сделать рабочий экран спокойнее?</summary><p>Оставьте на виду инструменты для текущей задачи. Уберите уведомления, которые не требуют немедленного ответа, и закройте вкладки, к которым не планируете обращаться. Важное сохраните в закладки с понятными названиями, чтобы не держать браузер в роли списка дел.</p></details>
-<details class="note"><summary>Что делать с идеями, которые приходят не вовремя?</summary><p>Заведите одно место для коротких записей. Фиксируйте мысль одним-двумя предложениями и возвращайтесь к текущему занятию. Раз в неделю перечитывайте записи: какие-то станут задачами, а какие-то останутся просто интересными наблюдениями.</p></details>
-<details class="note"><summary>Как понять, что дизайн стал удобнее?</summary><p>Возьмите конкретную задачу и попросите человека выполнить её без ваших подсказок. Посмотрите, где он останавливается и чего ожидает от кнопок. Исправляйте причины затруднений, а не только внешний вид. Красивый экран и понятный экран могут быть одним и тем же.</p></details>
-<details class="note"><summary>Нужно ли сразу менять все привычки?</summary><p>Нет. Выберите одно небольшое изменение, которое легко повторять: десять минут чтения без сообщений или разбор загрузок по пятницам. Если оно не подходит вашему ритму, измените условие. Удобная привычка должна помогать жить, а не добавлять чувство долга.</p></details>
+<details class="note"><summary>Как сделать рабочий экран спокойнее?</summary><p>Оставьте на виду инструменты для текущей задачи Уберите уведомления, которые не требуют немедленного ответа, и закройте вкладки, к которым не планируете обращаться Важное сохраните в закладки с понятными названиями, чтобы не держать браузер в роли списка дел</p></details>
+<details class="note"><summary>Что делать с идеями, которые приходят не вовремя?</summary><p>Заведите одно место для коротких записей Фиксируйте мысль одним-двумя предложениями и возвращайтесь к текущему занятию Раз в неделю перечитывайте записи: какие-то станут задачами, а какие-то останутся просто интересными наблюдениями</p></details>
+<details class="note"><summary>Как понять, что дизайн стал удобнее?</summary><p>Возьмите конкретную задачу и попросите человека выполнить её без ваших подсказок Посмотрите, где он останавливается и чего ожидает от кнопок Исправляйте причины затруднений, а не только внешний вид Красивый экран и понятный экран могут быть одним и тем же</p></details>
+<details class="note"><summary>Нужно ли сразу менять все привычки?</summary><p>Нет Выберите одно небольшое изменение, которое легко повторять: десять минут чтения без сообщений или разбор загрузок по пятницам Если оно не подходит вашему ритму, измените условие Удобная привычка должна помогать жить, а не добавлять чувство долга</p></details>
 </section>
-<section class="about" id="about" aria-labelledby="about-title"><div><p class="eyebrow">О журнале</p><h2 id="about-title">Любопытство.<br>Ясность. Внимание.</h2></div><div><p>«Тихая Среда» — небольшой редакционный проект о том, как мы живём рядом с технологиями. Здесь встречаются наблюдения о дизайне, привычках и инструментах, которые становятся частью повседневности.</p><p>Мы не составляем рейтинги продуктивности и не обещаем универсальных решений. Делимся идеями, которые можно обдумать, попробовать и приспособить к своему ритму.</p><div class="values"><span>Без рекламных интеграций</span><span>Без обязательной регистрации</span><span>В своём темпе</span></div></div></section>
+<section class="about" id="about" aria-labelledby="about-title"><div><p class="eyebrow">О журнале</p><h2 id="about-title">Любопытство<br>Ясность Внимание</h2></div><div><p>«Тихая Среда» — небольшой редакционный проект о том, как мы живём рядом с технологиями Здесь встречаются наблюдения о дизайне, привычках и инструментах, которые становятся частью повседневности</p><p>Мы не составляем рейтинги продуктивности и не обещаем универсальных решений Делимся идеями, которые можно обдумать, попробовать и приспособить к своему ритму</p><div class="values"><span>Без рекламных интеграций</span><span>Без обязательной регистрации</span><span>В своём темпе</span></div></div></section>
 </main>
 <footer><span>Тихая Среда · Журнал о цифровой культуре</span><a href="#ideas">Вернуться к материалам</a><a href="#top">Наверх ↑</a></footer>
 </div>
-<dialog id="reader" aria-labelledby="reader-title"><div class="reader-bar"><span>Тихая Среда / чтение</span><div class="reader-controls"><button class="icon-button" id="text-smaller" type="button" aria-label="Уменьшить размер текста">А−</button><button class="icon-button" id="text-larger" type="button" aria-label="Увеличить размер текста">А+</button><button class="icon-button" id="close-reader" type="button" aria-label="Закрыть материал" autofocus>×</button></div></div><div class="reader-body"><p class="eyebrow" id="reader-topic"></p><h2 id="reader-title"></h2><div id="reader-content"></div><p class="reader-end">Спасибо за внимание. Здесь можно не спешить.</p></div></dialog>
+<dialog id="reader" aria-labelledby="reader-title"><div class="reader-bar"><span>Тихая Среда / чтение</span><div class="reader-controls"><button class="icon-button" id="text-smaller" type="button" aria-label="Уменьшить размер текста">А−</button><button class="icon-button" id="text-larger" type="button" aria-label="Увеличить размер текста">А+</button><button class="icon-button" id="close-reader" type="button" aria-label="Закрыть материал" autofocus>×</button></div></div><div class="reader-body"><p class="eyebrow" id="reader-topic"></p><h2 id="reader-title"></h2><div id="reader-content"></div><p class="reader-end">Спасибо за внимание Здесь можно не спешить</p></div></dialog>
 <script>
 (() => {
   'use strict';
@@ -75,6 +102,14 @@ dialog{width:min(780px,calc(100% - 32px));max-height:88vh;max-height:88dvh;paddi
   const close = document.getElementById('close-reader');
   let opener = null;
   let size = 18;
+  const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)');
+  let closeTimer = null;
+  function closeReader() {
+    if (!reader.open || closeTimer !== null) return;
+    if (reducedMotion.matches) { reader.close(); return; }
+    reader.classList.add('is-closing');
+    closeTimer = setTimeout(() => { closeTimer = null; reader.close(); }, 180);
+  }
   const smaller = document.getElementById('text-smaller');
   const larger = document.getElementById('text-larger');
   function resizeText(delta) {
@@ -88,6 +123,7 @@ dialog{width:min(780px,calc(100% - 32px));max-height:88vh;max-height:88dvh;paddi
     document.getElementById('reader-topic').textContent = Array.from(story.querySelectorAll('.story-meta span'), item => item.textContent).join(' / ');
     document.getElementById('reader-content').replaceChildren(story.querySelector('.article-text').cloneNode(true));
     opener = trigger;
+    reader.classList.remove('is-closing');
     reader.showModal();
     document.body.classList.add('reading');
     reader.scrollTop = 0;
@@ -104,12 +140,16 @@ dialog{width:min(780px,calc(100% - 32px));max-height:88vh;max-height:88dvh;paddi
         if (story) { event.preventDefault(); openStory(story, link); }
       });
     });
-    close.addEventListener('click', () => reader.close());
+    close.addEventListener('click', closeReader);
+    reader.addEventListener('cancel', event => { event.preventDefault(); closeReader(); });
     reader.addEventListener('click', event => {
       const rect = reader.getBoundingClientRect();
-      if (event.target === reader && (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom)) reader.close();
+      if (event.target === reader && (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom)) closeReader();
     });
     reader.addEventListener('close', () => {
+      clearTimeout(closeTimer);
+      closeTimer = null;
+      reader.classList.remove('is-closing');
       document.body.classList.remove('reading');
       if (opener) opener.focus({preventScroll:true});
     });
@@ -125,8 +165,15 @@ dialog{width:min(780px,calc(100% - 32px));max-height:88vh;max-height:88dvh;paddi
     let count = 0;
     stories.forEach(story => {
       story.hidden = button.dataset.filter !== 'all' && story.dataset.topic !== button.dataset.filter;
-      if (!story.hidden) count++;
+      story.classList.remove('filter-enter');
+      if (!story.hidden) {
+        story.style.setProperty('--reveal-delay', (count % 3) * 65 + 'ms');
+        count++;
+      }
     });
+    requestAnimationFrame(() => stories.forEach(story => {
+      if (!story.hidden) story.classList.add('filter-enter');
+    }));
     document.getElementById('result-count').textContent = count === 6 ? '6 материалов для вдумчивого чтения' : '2 материала в выбранной теме';
   });
   if ('IntersectionObserver' in window) {
@@ -147,6 +194,64 @@ dialog{width:min(780px,calc(100% - 32px));max-height:88vh;max-height:88dvh;paddi
   addEventListener('resize', scheduleProgress);
   filters.addEventListener('click', scheduleProgress);
   updateProgress();
+
+  // One frame per input update, no perpetual JavaScript animation loop
+  const cover = document.querySelector('.cover');
+  const finePointer = matchMedia('(hover: hover) and (pointer: fine)');
+  const surfaces = [cover, ...stories];
+  let motionFrame = 0;
+  let activeSurface = null;
+  let pointerX = 0;
+  let pointerY = 0;
+  function paintMotion() {
+    motionFrame = 0;
+    if (reducedMotion.matches || document.hidden) return;
+    if (activeSurface && finePointer.matches) {
+      const bounds = activeSurface.getBoundingClientRect();
+      const x = Math.max(0, Math.min(bounds.width, pointerX - bounds.left));
+      const y = Math.max(0, Math.min(bounds.height, pointerY - bounds.top));
+      activeSurface.style.setProperty('--glow-x', x + 'px');
+      activeSurface.style.setProperty('--glow-y', y + 'px');
+      if (activeSurface === cover) {
+        cover.style.setProperty('--parallax-x', ((x / bounds.width - .5) * 16) + 'px');
+        cover.style.setProperty('--parallax-y', ((y / bounds.height - .5) * 12) + 'px');
+      }
+    }
+    const bounds = cover.getBoundingClientRect();
+    if (bounds.bottom > 0 && bounds.top < innerHeight) {
+      const distance = (innerHeight / 2 - bounds.top - bounds.height / 2) * .065;
+      cover.style.setProperty('--parallax-scroll', Math.max(-20, Math.min(20, distance)) + 'px');
+    }
+  }
+  function requestMotion() {
+    if (!motionFrame && !reducedMotion.matches && !document.hidden) motionFrame = requestAnimationFrame(paintMotion);
+  }
+  surfaces.forEach((surface, index) => {
+    surface.style.setProperty('--reveal-delay', ((index + 2) % 3) * 65 + 'ms');
+    surface.addEventListener('pointermove', event => {
+      if (!finePointer.matches || reducedMotion.matches) return;
+      activeSurface = surface; pointerX = event.clientX; pointerY = event.clientY;
+      requestMotion();
+    }, {passive:true});
+    surface.addEventListener('pointerleave', () => {
+      if (activeSurface === surface) activeSurface = null;
+      if (surface === cover) {
+        cover.style.setProperty('--parallax-x', '0px');
+        cover.style.setProperty('--parallax-y', '0px');
+      }
+    });
+  });
+  function resetMotion() {
+    cancelAnimationFrame(motionFrame); motionFrame = 0; activeSurface = null;
+    ['--parallax-x','--parallax-y','--parallax-scroll'].forEach(name => cover.style.removeProperty(name));
+    requestMotion();
+  }
+  reducedMotion.addEventListener('change', resetMotion);
+  finePointer.addEventListener('change', resetMotion);
+  addEventListener('scroll', requestMotion, {passive:true});
+  addEventListener('resize', requestMotion);
+  document.addEventListener('visibilitychange', resetMotion);
+  requestMotion();
 })();
 </script>
 </body>
