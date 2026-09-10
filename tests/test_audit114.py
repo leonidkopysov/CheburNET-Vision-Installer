@@ -230,12 +230,40 @@ main --resume
         self.assertIn("[[ -e /var/log/auth.log ]] || F2B_BACKEND='backend = systemd'", tuning)
         self.assertIn('${F2B_BACKEND}', tuning)
 
-    def test_image_and_docker_key_are_pre_pinned(self):
+    def test_latest_image_and_docker_key_fingerprint(self):
         installer = (ROOT/'src/installer.sh').read_text(encoding='utf-8')
-        self.assertRegex(runtime.NODE_IMAGE, r'^remnawave/node:3\.4\.1@sha256:[0-9a-f]{64}$')
+        self.assertEqual(runtime.NODE_IMAGE, 'remnawave/node:latest')
         self.assertIn('9DC858229FC7DD38854AE2D88D81803C0EBFCD88', installer)
         self.assertIn('apt_apply update', installer)
-        self.assertNotIn("v['services']['remnanode']['image']=digest", installer)
+        self.assertIn("config['services']['remnanode']['image'] = sys.argv[2]", installer)
+
+    def test_latest_is_pinned_and_resume_keeps_digest(self):
+        digest = 'remnawave/node@sha256:' + 'a' * 64
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            (base/'runtime.py').write_bytes((ROOT/'src/runtime.py').read_bytes())
+            config = base/'docker-compose.yml'
+            config.write_text(json.dumps({'services': {'remnanode': {'image': runtime.NODE_IMAGE}}}))
+            source = SOURCE.replace('readonly BASE=/opt/remnanode', f'readonly BASE={base}')
+            harness = '''
+compose(){ if [[ $1 == pull ]]; then python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["services"]["remnanode"]["image"])' "$BASE/docker-compose.yml"; fi; }
+docker(){ if [[ $* == *--format* ]]; then printf '%s\\n' "$TEST_DIGEST"; fi; }
+systemctl(){ :; }
+prepare_stack
+'''
+            for expected in (runtime.NODE_IMAGE, digest):
+                p = subprocess.run(['bash', '-c', source+harness], capture_output=True, text=True,
+                                   env={**os.environ, 'TEST_DIGEST': digest})
+                self.assertEqual(p.returncode, 0, p.stderr)
+                self.assertIn(expected, p.stdout)
+                self.assertEqual(json.loads(config.read_text())['services']['remnanode']['image'], digest)
+                self.assertEqual(config.stat().st_mode & 0o777, 0o600)
+            for invalid in ('', 'other/node@sha256:'+'b'*64, 'remnawave/node@sha256:abc'):
+                config.write_text(json.dumps({'services': {'remnanode': {'image': runtime.NODE_IMAGE}}}))
+                p = subprocess.run(['bash', '-c', source+harness], capture_output=True, text=True,
+                                   env={**os.environ, 'TEST_DIGEST': invalid})
+                self.assertEqual(p.returncode, 1)
+                self.assertEqual(json.loads(config.read_text())['services']['remnanode']['image'], runtime.NODE_IMAGE)
 
     def test_decoy_recovers_and_is_unique_per_install(self):
         unit = (ROOT/'src/cheburnet-decoy.service').read_text(encoding='utf-8')

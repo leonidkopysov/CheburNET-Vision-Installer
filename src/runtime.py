@@ -12,7 +12,7 @@ import subprocess
 import sys
 import tempfile
 
-NODE_IMAGE = 'remnawave/node:3.4.1@sha256:0cdf386dd49f360fc885bb34bde21132e478e40f0deac62d616086ec0fa9257e'
+NODE_IMAGE = 'remnawave/node:latest'
 # Фиксированное размещение служебных файлов
 BASE = '/opt/remnanode'
 TAG = 'Vision-TLS'

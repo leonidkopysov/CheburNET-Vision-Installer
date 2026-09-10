@@ -469,13 +469,32 @@ EOF
 prepare_stack() {
     step '04 / Образ ноды и два Unix-сокета'
     compose config -q
-    local image
+    local image digest
     image=$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1],encoding="utf-8"))["services"]["remnanode"]["image"])' \
       "$BASE/docker-compose.yml")
-    [[ $image =~ ^remnawave/node:[^@[:space:]]+@sha256:[[:xdigit:]]{64}$ ]] || \
-      die 'В конфигурации ноды нет заранее проверенного дайджеста SHA-256'
+    [[ $image == remnawave/node:latest || $image =~ ^remnawave/node(:[^@[:space:]]+)?@sha256:[0-9a-f]{64}$ ]] || \
+      die 'Ожидается remnawave/node:latest или уже закреплённый образ ноды'
     compose pull
     docker image inspect "$image" >/dev/null || die 'Не удалось проверить загруженный образ ноды'
+    if [[ $image == remnawave/node:latest ]]; then
+        digest=$(docker image inspect "$image" --format '{{range .RepoDigests}}{{println .}}{{end}}' | \
+          awk '/^remnawave\/node@sha256:[0-9a-f]+$/ {print; exit}') || \
+          die 'Не удалось получить дайджест загруженного образа ноды'
+        [[ $digest =~ ^remnawave/node@sha256:[0-9a-f]{64}$ ]] || \
+          die 'Загруженный образ ноды не содержит корректного дайджеста SHA-256'
+        python3 -B - "$BASE/docker-compose.yml" "$digest" <<'PY'
+import json
+import sys
+from pathlib import Path
+path = Path(sys.argv[1])
+sys.path.insert(0, str(path.parent))
+from runtime import json_write
+config = json.loads(path.read_text(encoding='utf-8'))
+config['services']['remnanode']['image'] = sys.argv[2]
+json_write(path, config)
+PY
+        ok "Последний образ latest загружен и закреплён: $digest"
+    fi
     systemctl enable --now cheburnet-decoy.service
     ok 'Образ закреплён по дайджесту; служба сайта-заглушки запущена'
 }
