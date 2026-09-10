@@ -1,0 +1,8 @@
+[Unit]
+Description=ЧебурNET: удаление просроченного разрешения ACME
+After=ufw.service
+ConditionPathExists=/run/cheburnet-vision-acme.active
+
+[Service]
+Type=oneshot
+ExecStart=/opt/remnanode/acme-firewall.sh expire

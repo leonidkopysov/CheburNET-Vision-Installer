@@ -6,7 +6,7 @@ import tempfile
 import unittest
 
 ROOT=Path(__file__).resolve().parents[1]
-SOURCE=(ROOT/'src/installer.sh').read_text().split('# Private child entry')[0]
+SOURCE=(ROOT/'src/installer.sh').read_text().split('# Внутренняя точка входа для дочернего процесса')[0]
 
 
 def shell(code,env=None):
@@ -23,7 +23,7 @@ prepare_system_packages
 ''')
         self.assertNotEqual(result.returncode,0)
         self.assertNotIn('APT НЕ ДОЛЖЕН ЗАПУСКАТЬСЯ',result.stdout)
-        self.assertIn('отменены',result.stderr)
+        self.assertIn('отменены',result.stdout)
 
     def test_package_preparation_checks_index_before_reporting_ready(self):
         with tempfile.TemporaryDirectory() as td:
@@ -58,7 +58,7 @@ prepare_system_packages
     def test_package_preparation_precedes_payload_and_node_questions(self):
         main=SOURCE[SOURCE.index('main() {'):]
         install_branch=main[main.rindex('        --install)'):]
-        self.assertLess(install_branch.index('prepare_system_packages'),install_branch.index('unpack'))
+        self.assertLess(install_branch.index('unpack'),install_branch.index('prepare_system_packages'))
         self.assertLess(install_branch.index('prepare_system_packages'),install_branch.index('collect'))
         self.assertLess(install_branch.index('preflight'),install_branch.index('install_docker'))
 
@@ -124,7 +124,7 @@ wait_api
             self.assertIn('слушает API',result.stdout)
 
     def test_nofile_numeric_and_unlimited(self):
-        fn=(ROOT/'src/check-nofile.sh').read_text().split('# Read this shell')[0]
+        fn=(ROOT/'src/check-nofile.sh').read_text().split('# Читаем фактические Linux-лимиты')[0]
         for value,ok in [('unlimited',True),('1048576',True),('2097152',True),('1024',False),('',False),('broken',False)]:
             with self.subTest(value=value):
                 r=subprocess.run(['sh','-c',fn+'\nlimit_ok "$1"','test',value],capture_output=True)
@@ -136,14 +136,18 @@ wait_api
             base=Path(td)/'node';base.mkdir()
             le=Path(td)/'letsencrypt';(le/'renewal-hooks/deploy').mkdir(parents=True)
             log=Path(td)/'events'
+            (Path(td)/'units').mkdir()
+            for name in ('cheburnet-acme-expiry.service', 'cheburnet-acme-expiry.timer'):
+                (base/name).write_text('[Unit]\n')
             for name in ['acme-pre.sh','acme-post.sh','renew-hook.sh']:(base/name).write_text('#!/bin/sh\nexit 0\n')
             (base/'acme-firewall.sh').write_text('#!/bin/sh\nprintf "%s\\n" "$1" >> "$EVENT_LOG"\n')
             (base/'acme-firewall.sh').chmod(0o700)
             harness=SOURCE.replace('readonly BASE=/opt/remnanode',f'readonly BASE={base}').replace('/etc/letsencrypt',str(le))
+            harness=harness.replace('/etc/systemd/system',str(Path(td)/'units'))
             stubs='''
 get_setting(){ case "$1" in domain) echo node.example.com;; email) echo admin@example.com;; esac; }
 ss(){ :; }
-openssl(){ :; }
+openssl(){ echo 'Hostname node.example.com does match certificate'; }
 systemctl(){ :; }
 certbot(){
   case "$1" in
@@ -164,7 +168,8 @@ issue_certificate
 
     def test_acme_firewall_bypasses_traffic_control_only_for_port_80(self):
         source=(ROOT/'src/acme-firewall.sh').read_text()
-        self.assertIn('nft insert rule inet cheburnet_tc ingress tcp dport 80',source)
+        self.assertIn('nft insert rule inet cheburnet_tc ingress tcp dport @acme_ports',source)
+        self.assertIn('{ 80 timeout 3600s }',source)
         self.assertIn('remove_own_traffic_control_rules',source)
         self.assertNotIn('flush ruleset',source)
 

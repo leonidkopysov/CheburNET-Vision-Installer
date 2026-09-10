@@ -39,7 +39,7 @@ class SecurityTests(unittest.TestCase):
 
     def test_release_version_and_component_order(self):
         installer = (ROOT/'src/installer.sh').read_text(encoding='utf-8')
-        self.assertIn('readonly CHEBURNET_VERSION=1.1.3', installer)
+        self.assertIn('readonly CHEBURNET_VERSION=1.1.5', installer)
         self.assertNotIn('experimental', installer.lower())
         self.assertNotIn('эксперимент', installer.lower())
         sequence = [
@@ -76,7 +76,7 @@ class SecurityTests(unittest.TestCase):
         installer = (ROOT/'src/installer.sh').read_text(encoding='utf-8')
         self.assertNotIn('@PAYLOAD_SHA256@', installer)
         self.assertNotIn('\npayload() {', installer)
-        self.assertEqual(installer.count('# Private child entry'), 1)
+        self.assertEqual(installer.count('# Внутренняя точка входа для дочернего процесса'), 1)
 
     def test_firewall_accepts_exact_panel_ip(self):
         sec.firewall(UFW, 2222, '203.0.113.10')
@@ -106,7 +106,7 @@ class SecurityTests(unittest.TestCase):
         with patch('builtins.input',side_effect=answers), \
              patch.object(runtime.getpass,'getpass',return_value='SECRET_TEST_ONLY'), \
              patch.object(runtime,'validate_key'),patch.object(runtime,'render') as render, \
-             contextlib.redirect_stdout(output),self.assertRaises(KeyboardInterrupt):
+             contextlib.redirect_stdout(output),self.assertRaises(runtime.Cancelled):
             runtime.collect('/unused')
         render.assert_not_called()
         self.assertNotIn('SECRET_TEST_ONLY',output.getvalue())

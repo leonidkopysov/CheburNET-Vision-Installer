@@ -8,8 +8,8 @@ from pathlib import Path
 import tarfile
 
 ROOT = Path(__file__).resolve().parent
-TUNING_SHA256 = '49ed28d5f4939b652cd71f40145a49963a6462e3931e8e6d695e55baa8167b1b'
-TRAFFIC_CONTROL_SHA256 = '438edfd29e10d8810dbe905cfe12125c2051d3bbcce90473a82db016410c9d07'
+TUNING_SHA256 = 'ef1b8e74ca90a67d5edaea9139f3f0885e3190af240dcf260da6d3dcaade7cac'
+TRAFFIC_CONTROL_SHA256 = '0fbe165c19cd2f0a91af504fe7e1f01e21f77df3a94d232af77a7868286b5871'
 
 
 def build():
@@ -38,7 +38,7 @@ def build():
             + encoded + 'CHEBURNET_PAYLOAD\n}\n\n')
     source = (ROOT/'src/installer.sh').read_text()
     assert '@PAYLOAD_SHA256@' not in source, 'Obsolete payload placeholder in manager source'
-    marker = '# Private child entry'
+    marker = '# Внутренняя точка входа для дочернего процесса'
     assert source.count(marker) == 1, 'Payload insertion marker missing or duplicated'
     source = source.replace(marker, func + marker)
     assert source.count('payload() {') == 1, 'Payload function was not injected'
