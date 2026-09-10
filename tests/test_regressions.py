@@ -14,6 +14,33 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class AuditTests(unittest.TestCase):
+    def test_python_utf8_overrides_disabled_environment(self):
+        p = shell("python3 -c 'import sys; print(sys.flags.utf8_mode); print(chr(1055))'", {'PYTHONUTF8': '0'})
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertEqual(p.stdout, '1\nП\n')
+
+    def test_http_probe_reports_transport_failure_without_generic_trap(self):
+        for code in (7, 28, 60):
+            p = shell(f'''curl(){{ return {code}; }}
+result=$(probe_http 'сокет HTTP/1.1' http://localhost/) || exit 1
+echo UNEXPECTED
+''')
+            self.assertEqual(p.returncode, 1)
+            self.assertIn('Не удалось выполнить проверку: сокет HTTP/1.1', p.stderr)
+            self.assertNotIn('остановка на строке', p.stderr)
+            self.assertNotIn('UNEXPECTED', p.stdout)
+
+    def test_http_probe_bounds_time_and_preserves_http_status(self):
+        p = shell('''curl(){
+  [[ " $* " == *" --connect-timeout 5 "* ]] || return 91
+  [[ " $* " == *" --max-time 15 "* ]] || return 92
+  printf 503
+}
+probe_http 'HTTP/2' http://localhost/
+''')
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertEqual(p.stdout, '503')
+
     def test_os_fields_are_optional_and_do_not_leak(self):
         with tempfile.TemporaryDirectory() as td:
             release = Path(td)/'os-release'

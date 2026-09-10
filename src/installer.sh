@@ -9,7 +9,8 @@
 # ==============================================================================
 set -Eeuo pipefail
 umask 077
-export LC_ALL=C
+export LC_ALL=C.UTF-8
+export PYTHONUTF8=1
 readonly CHEBURNET_VERSION=1.1.2
 # Фиксированный каталог используется службами systemd и хуками.
 readonly BASE=/opt/remnanode
@@ -39,7 +40,7 @@ banner() {
     say "  ◆ Сертификат Let's Encrypt и автоматическое продление"
     say '  ◆ Продвинутая настройка ЧебурNET: сеть, ZRAM, защита сервера'
     say '  ◆ Ограничение API IP-адресами панели, защита служб и SSH'
-    say '  ◆ ЧебурNET Traffic Control — по вашему выбору: три внешних списка'
+    say '  ◆ ЧебурNET Traffic Control — опционально: фильтрация по трём внешним спискам'
     say ''
     say '  По завершении: готовый профиль ноды и настройки хоста.'
     say '  Нужен отдельный сервер с прямым IP и доменом без CDN.'
@@ -113,7 +114,7 @@ os_identity() (
 )
 
 require_server() {
-    (( EUID == 0 )) || die 'Запустите от root.'
+    (( EUID == 0 )) || die 'Запустите скрипт от имени root'
     [[ -d /run/systemd/system ]] || die 'Нужен сервер с systemd, не контейнер/chroot.'
     local identity distro release codename
     identity=$(os_identity)
@@ -288,7 +289,7 @@ preflight() {
     [[ ! -e /var/www/decoy ]] || die 'Каталог /var/www/decoy уже существует; его содержимое не перезаписывается.'
     python3 "$WORK/runtime.py" check-dns --settings "$WORK/rendered/settings.json"
     # Поддержка HTTP/2 проверяется до изменения конфигурации ноды.
-    curl -V | awk '/Features:/ && /HTTP2/ {ok=1} END {exit !ok}' || die 'Нужен curl с HTTP2 из пакетов системы.'
+    curl -V | awk '/Features:/ && /HTTP2/ {ok=1} END {exit !ok}' || die 'Требуется curl с поддержкой HTTP/2 из системных пакетов'
     check_nat
     for other in cheburnet-decoy.service cheburnet-acme-cleanup.service; do
         [[ ! -e /etc/systemd/system/$other && ! -L /etc/systemd/system/$other ]] || \
@@ -373,7 +374,10 @@ prepare_stack() {
     local image digest
     image=$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1],encoding="utf-8"))["services"]["remnanode"]["image"])' \
       "$BASE/docker-compose.yml")
-    digest=$(docker image inspect "$image" --format '{{index .RepoDigests 0}}')
+    digest=$(docker image inspect "$image" --format '{{index .RepoDigests 0}}') || \
+      die 'Не удалось получить digest загруженного образа ноды'
+    [[ $digest =~ ^[^[:space:]@]+@sha256:[[:xdigit:]]{64}$ ]] || \
+      die 'Загруженный образ ноды не содержит корректного SHA-256 digest'
     python3 - "$BASE/docker-compose.yml" "$digest" <<'PY'
 import json,sys
 from pathlib import Path
@@ -397,7 +401,7 @@ apply_tuning() {
       CHEBURNET_FIREWALL_PORTS='tcp:443' CHEBURNET_ENABLE_UFW=1 CHEBURNET_CERTIFICATES=0 \
       bash "$BASE/vendor/cheburnet-auto-tuning.sh" < /dev/null | tee "$BASE/tuning-report.log"
     # После тюнинга ограничения API проверяются повторно.
-    ufw status | awk '/^Status: active$/ {ok=1} END {exit !ok}' || die 'Тюнинг не активировал UFW. Проверьте его отчёт.'
+    ufw status | awk '/^Status: active$/ {ok=1} END {exit !ok}' || die 'Продвинутая настройка не активировала UFW. Проверьте её отчёт'
     python3 "$BASE/security_check.py" --firewall
     ok 'Продвинутая настройка завершена; ограничения API подтверждены.'
 }
@@ -531,6 +535,14 @@ module.main(["install", "--yes"])
     traffic_control_report
 }
 
+probe_http() {
+    local label=$1 result
+    shift
+    result=$(curl --noproxy '*' -sS --connect-timeout 5 --max-time 15 "$@") || \
+      die "Не удалось выполнить проверку: $label (ошибка соединения, TLS или превышено время ожидания)"
+    printf '%s' "$result"
+}
+
 check() {
     [[ -f $BASE/.cheburnet-managed && -f $BASE/settings.json ]] || die 'Установка ЧебурNET не найдена.'
     step 'Проверка конфигурации и работающих компонентов'
@@ -544,11 +556,11 @@ check() {
     for socket_name in h1 h2; do
         [[ -S $BASE/fallback-sockets/$socket_name.sock ]] || die "Нет сокета $socket_name.sock."
     done
-    h1=$(curl --noproxy '*' -fsS --unix-socket "$BASE/fallback-sockets/h1.sock" -o /dev/null -w '%{http_code}' http://localhost/)
-    [[ $h1 == 200 ]] || die 'Unix HTTP/1.1 не отвечает 200.'
-    curl -V | awk '/Features:/ && /HTTP2/ {ok=1} END {exit !ok}' || die 'Для проверки HTTP/2 нужен curl с HTTP2 (пакет apt curl).'
-    h2=$(curl --noproxy '*' -fsS --http2-prior-knowledge --unix-socket "$BASE/fallback-sockets/h2.sock" -o /dev/null -w '%{http_code}:%{http_version}' http://localhost/)
-    [[ $h2 == 200:2 ]] || die 'Unix HTTP/2 не отвечает 200 по h2.'
+    h1=$(probe_http 'сокет HTTP/1.1' --unix-socket "$BASE/fallback-sockets/h1.sock" -o /dev/null -w '%{http_code}' http://localhost/) || exit 1
+    [[ $h1 == 200 ]] || die 'Сокет HTTP/1.1 не вернул код 200'
+    curl -V | awk '/Features:/ && /HTTP2/ {ok=1} END {exit !ok}' || die 'Требуется curl с поддержкой HTTP/2 из системных пакетов'
+    h2=$(probe_http 'сокет HTTP/2' --http2-prior-knowledge --unix-socket "$BASE/fallback-sockets/h2.sock" -o /dev/null -w '%{http_code}:%{http_version}' http://localhost/) || exit 1
+    [[ $h2 == 200:2 ]] || die 'Сокет HTTP/2 не вернул код 200 по протоколу HTTP/2'
     docker exec remnanode xray run -test -config /opt/cheburnet/profile.json
     systemctl is-active --quiet certbot.timer
     python3 "$BASE/security_check.py"
@@ -568,8 +580,8 @@ check() {
         warn 'Ожидание: примените профиль к ноде в панели. Сквозная проверка TLS/443 ещё не выполнена.'
         exit 2
     fi
-    h1=$(curl --noproxy '*' --resolve "$domain:443:127.0.0.1" --tlsv1.3 --http1.1 -fsS --max-time 15 -o /dev/null -w '%{http_code}' "https://$domain/")
-    h2=$(curl --noproxy '*' --resolve "$domain:443:127.0.0.1" --tlsv1.3 --http2 -fsS --max-time 15 -o /dev/null -w '%{http_code}:%{http_version}' "https://$domain/")
+    h1=$(probe_http 'TLS/443 HTTP/1.1' --resolve "$domain:443:127.0.0.1" --tlsv1.3 --http1.1 -o /dev/null -w '%{http_code}' "https://$domain/") || exit 1
+    h2=$(probe_http 'TLS/443 HTTP/2' --resolve "$domain:443:127.0.0.1" --tlsv1.3 --http2 -o /dev/null -w '%{http_code}:%{http_version}' "https://$domain/") || exit 1
     [[ $h1 == 200 && $h2 == 200:2 ]] || die 'TLS fallback на 443 не прошёл проверку.'
     if curl --noproxy '*' --resolve "$domain:443:127.0.0.1" --tlsv1.2 --tls-max 1.2 --http1.1 -sS --max-time 10 -o /dev/null "https://$domain/" 2>/dev/null; then
         die 'Порт 443 принимает TLS 1.2. Проверьте минимальную версию TLS в активном профиле панели.'
@@ -643,7 +655,9 @@ bootstrap_project() {
           die "Не найден сохранённый файл подготовки: $name. Автопродолжение невозможно"
     done
     # Секреты/код: root 0600/0700. Публичный сайт/nginx.conf: 0644.
-    # Сокеты: root:root 0660, каталог для прохода служб: 0755.
+    # Сокеты: root:root 0660, их каталог: 0755; родитель BASE остаётся 0700.
+    # nginx-мастер открывает сокеты от root, рабочие процессы наследуют их;
+    # контейнер обращается через отдельный bind-mount каталога сокетов.
     install -d -m 755 /var/www/decoy "$BASE/fallback-sockets"
     install -m 644 "$BASE/bootstrap/decoy.html" /var/www/decoy/index.html
     apt_confirmed install --no-install-recommends nginx
