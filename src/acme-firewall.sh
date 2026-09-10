@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
+umask 077
 export LC_ALL=C
 # Only rules with this exact owned comment are removed. Never reset the firewall.
 readonly OWN_COMMENT=CheburNET-Vision-ACME-temporary

@@ -18,6 +18,7 @@ WORK=''
 STAGING=''
 ACME_OPEN=0
 APT_APPROVED=0
+CURRENT_ACTION=''
 CYAN='' GREEN='' YELLOW='' RED='' BOLD='' RESET=''
 if [[ -t 1 && ! -v NO_COLOR ]]; then
     CYAN=$'\033[36m'; GREEN=$'\033[32m'; YELLOW=$'\033[33m'; RED=$'\033[31m'
@@ -90,7 +91,7 @@ report_error() {
     fi
     (( BASH_SUBSHELL == 0 )) || return 0
     printf '\n  %s✗ ОШИБКА:%s остановка на строке %s (код %s)\n' "$RED" "$RESET" "$line" "$rc" >&2
-    if [[ -f $BASE/.cheburnet-managed ]]; then
+    if [[ -f $BASE/.cheburnet-managed && ( $CURRENT_ACTION == --install || $CURRENT_ACTION == --resume ) ]]; then
         printf '  После устранения причины: bash %s/installer.sh --resume\n' "$BASE" >&2
     fi
 }
@@ -345,11 +346,12 @@ preflight() {
     done
     ! command -v nginx >/dev/null || die 'На сервере уже установлен nginx. Автозамена сторонней конфигурации запрещена.'
     [[ ! -e /var/www/decoy ]] || die 'Каталог /var/www/decoy уже существует; его содержимое не перезаписывается.'
-    python3 "$WORK/runtime.py" check-dns --settings "$WORK/rendered/settings.json"
+    python3 "$WORK/runtime.py" check-dns --settings "$WORK/rendered/settings.json" || exit "$?"
     # Поддержка HTTP/2 проверяется до изменения конфигурации ноды.
     curl -V | awk '/Features:/ && /HTTP2/ {ok=1} END {exit !ok}' || die 'Требуется curl с поддержкой HTTP/2 из системных пакетов'
     check_nat
-    for other in cheburnet-decoy.service cheburnet-acme-cleanup.service; do
+    for other in cheburnet-decoy.service cheburnet-acme-cleanup.service \
+      cheburnet-acme-expiry.service cheburnet-acme-expiry.timer cheburnet-two-way-ping.service; do
         [[ ! -e /etc/systemd/system/$other && ! -L /etc/systemd/system/$other ]] || \
           die "Служба $other уже существует. Требуется разбор предыдущей установки"
     done
@@ -821,6 +823,7 @@ main() {
     else
         action=$1
     fi
+    CURRENT_ACTION=$action
     if [[ $action != --render ]] && (( $# > 1 )); then
         die "Команда $action не принимает дополнительные аргументы"
     fi

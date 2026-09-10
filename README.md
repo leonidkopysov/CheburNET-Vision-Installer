@@ -91,6 +91,8 @@ sha256sum -c SHA256SUMS && bash ./cheburnet-vision-install.sh
 
 Версия следующего изменения — `1.1.4`. История, прежние теги и релизы сохраняются. До слияния изменения нужны успешный CI и прогоны на тестовой VPS по [чек-листу](docs/TEST-REPORT.md). Слияние в `main` запускает публикацию версии через GitHub Actions. [Описание изменений](docs/RELEASE-NOTES-1.1.4.md)
 
+Пока изменение не слито, команды с `main` устанавливают предыдущий выпуск. Для теста 1.1.4 скачайте установщик и SHA256SUMS из ветки `fix/vision-1.1.4-audit` либо из одного полного SHA её коммита, проверьте сумму и `--version`. Не запускайте тестовую сборку поверх рабочей ноды
+
 `main` изменяется со временем. Для воспроизводимой установки используйте файлы [конкретного выпуска](https://github.com/leonidkopysov/CheburNET-Vision-Installer/releases) или URL с полным SHA коммита. Сумма, скачанная рядом со скриптом, обнаруживает повреждение/рассинхронизацию, но не является независимой подписью. Быстрый вариант не проверяет SHA-256 самого установщика
 
 ## Версия, коды завершения и продолжение
@@ -122,6 +124,7 @@ Traffic Control внутри этой сборки имеет базовую в�
 - пакеты APT, Docker и nginx; `/etc/apt/keyrings/cheburnet-docker.asc`, `/etc/apt/sources.list.d/cheburnet-docker.sources`;
 - `/var/www/decoy`, собственные `cheburnet-decoy.service` и `cheburnet-acme-cleanup.service`; штатная `nginx.service` останавливается и маскируется;
 - `/etc/letsencrypt` и собственные хуки `90-cheburnet-vision` в каталогах pre/post/deploy; `certbot.timer`;
+- `cheburnet-acme-expiry.service`, `cheburnet-acme-expiry.timer` и временную отметку `/run/cheburnet-vision-acme.active`;
 - drop-in SSH `/etc/ssh/sshd_config.d/00-cheburnet-vision.conf`, собственные sysctl-файлы и резервные копии;
 - настройки и службы Auto Tuning, UFW, Fail2ban, `/usr/local/sbin/cheburnet-two-way-ping.sh`, `cheburnet-two-way-ping.service`, таблицу `inet cheburnet_privacy`, а при согласии — файлы и таблицу nftables Traffic Control;
 - блокировку `/run/cheburnet-vision.lock`, временные каталоги подготовки и журналы.
