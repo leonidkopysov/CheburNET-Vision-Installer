@@ -61,7 +61,7 @@ apt_confirmed full-upgrade
             self.assertNotIn('EXECUTED', p.stdout)
             self.assertNotIn('ASKED', p.stdout)
 
-    def test_apt_changed_plan_requires_new_consent(self):
+    def test_apt_changed_plan_reuses_run_consent(self):
         with tempfile.TemporaryDirectory() as td:
             p = shell('''
 ask_yes(){ echo CONSENT; return 0; }
@@ -75,8 +75,22 @@ apt-get(){
 apt_confirmed install --no-install-recommends pkg
 ''', {'COUNTER': str(Path(td)/'count')})
             self.assertEqual(p.returncode, 0, p.stderr)
-            self.assertEqual(p.stdout.count('CONSENT'), 2)
+            self.assertEqual(p.stdout.count('CONSENT'), 1)
             self.assertIn('--no-remove -y install --no-install-recommends pkg', p.stdout)
+
+    def test_multiple_apt_plans_require_one_consent(self):
+        p = shell('''
+ask_yes(){ echo CONSENT; return 0; }
+apt-get(){
+  if [[ $1 == -s ]]; then echo 'Inst pkg (1 test)';
+  else printf 'EXECUTED %s\n' "$*"; fi
+}
+apt_confirmed install first
+apt_confirmed install second
+''')
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertEqual(p.stdout.count('CONSENT'), 1)
+        self.assertEqual(p.stdout.count('EXECUTED'), 2)
 
     def test_apt_cancel_and_failed_recheck(self):
         for consent, fail in ((1, 0), (0, 1)):

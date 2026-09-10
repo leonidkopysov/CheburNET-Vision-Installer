@@ -16,6 +16,7 @@ readonly BASE=/opt/remnanode
 WORK=''
 STAGING=''
 ACME_OPEN=0
+APT_APPROVED=0
 CYAN='' GREEN='' YELLOW='' RED='' BOLD='' RESET=''
 if [[ -t 1 && -z ${NO_COLOR:-} ]]; then
     CYAN=$'\033[36m'; GREEN=$'\033[32m'; YELLOW=$'\033[33m'; RED=$'\033[31m'
@@ -122,6 +123,15 @@ require_server() {
     case "$(uname -m)" in x86_64|aarch64) ;; *) die 'Поддерживаются x86_64 и arm64.';; esac
 }
 
+approve_apt_for_run() {
+    (( APT_APPROVED == 0 )) || return 0
+    if ! ask_yes 'Разрешить для текущей установки обновление APT и системы, а также установку обязательных пакетов, Docker и nginx?'; then
+        die 'Обновление системы и установка компонентов отменены. Установка ноды не начата'
+    fi
+    APT_APPROVED=1
+    ok 'Действия APT разрешены для текущего запуска; каждый план будет показан перед применением'
+}
+
 apt_confirmed() {
     local simulation plan verified attempts=0
     local -a added updated removed
@@ -145,14 +155,14 @@ apt_confirmed() {
         say '  Точные версии и действия:'
         printf '%s\n' "$plan" | sed 's/^/    /'
         (( ${#removed[@]} == 0 )) || die 'План требует удаления пакетов. Автоудаление запрещено; разберите план вручную'
-        ask_yes 'Применить этот план APT?' || die 'Изменения APT отменены пользователем'
+        approve_apt_for_run
         verified=$(apt-get -s -o Dpkg::Options::=--force-confold "$@" 2>&1) || \
           die 'Повторная проверка плана APT завершилась ошибкой'
         verified=$(awk '$1=="Inst" || $1=="Remv" || $1=="Conf"' <<< "$verified")
         [[ $verified != "$plan" ]] || break
         attempts=$((attempts+1))
         (( attempts < 3 )) || die 'План APT постоянно меняется. Дождитесь завершения других обновлений'
-        warn 'План изменился; требуется повторное подтверждение'
+        warn 'План APT изменился; пересчитываю его перед применением в рамках полученного разрешения'
     done
     # Даже при изменении состояния после симуляции APT не вправе удалять пакеты.
     apt-get -o DPkg::Lock::Timeout=600 -o Dpkg::Options::=--force-confold --no-remove -y "$@"
@@ -185,9 +195,7 @@ prepare_system_packages() {
     say '  После обновления индекса скрипт покажет точный план изменений.'
     say '  Docker и nginx устанавливаются позже — после проверок совместимости и портов.'
     warn 'Обновление пакетов может перезапустить системные службы и потребовать перезагрузку.'
-    if ! ask_yes 'Разрешить обновление индекса APT и проверку доступных обновлений?'; then
-        die 'Проверка и обновление системы отменены. Установка ноды не начата.'
-    fi
+    approve_apt_for_run
 
     export DEBIAN_FRONTEND=noninteractive
     export NEEDRESTART_MODE=a
