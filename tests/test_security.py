@@ -32,6 +32,7 @@ class SecurityTests(unittest.TestCase):
         tuning = (ROOT/'vendor/cheburnet-auto-tuning.sh').read_text(encoding='utf-8')
         traffic_control = (ROOT/'src/cheburnet-traffic-control.py').read_text(encoding='utf-8')
         self.assertIn('VERSION = "1.0.0"', traffic_control)
+        self.assertIn('input(confirmation_prompt(label + " [Д/Н]: "))', traffic_control)
         self.assertIn('module.main(args)', installer)
         self.assertIn('settings = json.loads(settings_path.read_text', installer)
         self.assertIn('Автоматически использованы параметры текущего SSH-подключения', installer)
@@ -45,6 +46,8 @@ class SecurityTests(unittest.TestCase):
         self.assertIn("confirm_install() { ask_yes 'Установить на машину ЧебурNET Vision?'; }", installer)
         self.assertIn("step 'ИТОГОВЫЙ ОТЧЁТ ПО КОМПОНЕНТАМ'", installer)
         self.assertIn("installation_report \"$rc\"", installer)
+        self.assertIn("column_width - ${#component}", installer)
+        self.assertIn('"$BOLD" "$YELLOW" "$1"', installer)
         for component in ('Docker Engine', 'RemnaNode', 'API ноды (mTLS)', 'Xray Core',
                           'nginx и сайт-заглушка', 'TLS-сертификат',
                           'ЧебурNET Traffic Control', 'Профиль TLS/443'):

@@ -53,12 +53,12 @@ banner() {
 ask_yes() {
     local answer
     while true; do
-        printf '\n  %s [Д/Y · Н/N]: ' "$1" > /dev/tty
+        printf '\n  %s%s%s [Д/Y · Н/N]: %s' "$BOLD" "$YELLOW" "$1" "$RESET" > /dev/tty
         IFS= read -r answer < /dev/tty || return 1
         case "$answer" in
             Д|д|Да|да|ДА|дА|[Yy]|[Yy][Ee][Ss]) return 0;;
             ''|Н|н|Нет|НеТ|НЕт|НЕТ|нет|неТ|нЕт|нЕТ|[Nn]|[Nn][Oo]) return 1;;
-            *) printf '  Введите Д/Y — да или Н/N — нет\n' > /dev/tty;;
+            *) printf '  %s%sВведите Д/Y — да или Н/N — нет%s\n' "$BOLD" "$YELLOW" "$RESET" > /dev/tty;;
         esac
     done
 }
@@ -636,14 +636,19 @@ check() {
 
 report_row() {
     local component=$1 status=$2 color=${3:-$GREEN}
-    printf '  %-34s %s%s%s\n' "$component" "$color" "$status" "$RESET"
+    local column_width=34 padding
+    # Bash printf считает ширину UTF-8 по байтам. ${#component} считает
+    # отображаемые символы, поэтому статус всегда начинается в одной колонке.
+    padding=$((column_width - ${#component}))
+    (( padding >= 2 )) || padding=2
+    printf '  %s%*s%s%s%s\n' "$component" "$padding" '' "$color" "$status" "$RESET"
 }
 
 installation_report() {
     local rc=$1 traffic_choice
     traffic_choice=$(cat "$BASE/.traffic-control-choice" 2>/dev/null || true)
     step 'ИТОГОВЫЙ ОТЧЁТ ПО КОМПОНЕНТАМ'
-    printf '  %-34s %s\n' 'КОМПОНЕНТ' 'СТАТУС'
+    report_row 'КОМПОНЕНТ' 'СТАТУС' "$BOLD$CYAN"
     say '  ───────────────────────────────────────────────────────────────'
     report_row 'Система и пакеты' 'ОБНОВЛЕНЫ'
     report_row 'Docker Engine' 'ЗАПУЩЕН'
