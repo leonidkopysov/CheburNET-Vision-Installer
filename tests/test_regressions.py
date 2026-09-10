@@ -75,6 +75,23 @@ probe_http 'HTTP/2' http://localhost/
                 self.assertEqual(p.stdout.strip(), expected)
                 self.assertIn('Проверка', prompt.read_text())
 
+    def test_confirmation_prompt_is_bold_yellow(self):
+        with tempfile.TemporaryDirectory() as td:
+            answer = Path(td)/'answer'; prompt = Path(td)/'prompt'
+            answer.write_text('д\n')
+            source = SOURCE.replace('> /dev/tty', '> "$PROMPT_FILE"').replace('< /dev/tty', '< "$ANSWER_FILE"')
+            p = subprocess.run(['bash', '-c', source + "\nBOLD=BOLD; YELLOW=YELLOW; RESET=RESET; ask_yes 'Проверка'"],
+                capture_output=True, text=True, timeout=3,
+                env={**os.environ, 'PROMPT_FILE': str(prompt), 'ANSWER_FILE': str(answer)})
+            self.assertEqual(p.returncode, 0, p.stderr)
+            self.assertIn('BOLDYELLOWПроверка [Д/Y · Н/N]: RESET', prompt.read_text())
+
+    def test_report_statuses_start_in_one_column(self):
+        p = shell("GREEN=''; RESET=''; report_row 'Система и пакеты' ГОТОВО; report_row 'Docker Engine' ГОТОВО; report_row 'ЧебурNET Traffic Control' ГОТОВО")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        positions = {line.index('ГОТОВО') for line in p.stdout.splitlines()}
+        self.assertEqual(positions, {36})
+
     def test_apt_removals_visible_and_not_executed(self):
         for plan in ('Remv old [1]', 'Inst new (2 test)\nInst old [1] (2 test)\nRemv removed [1]'):
             p = shell('''

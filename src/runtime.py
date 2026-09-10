@@ -18,6 +18,13 @@ BASE = '/opt/remnanode'
 TAG = 'Vision-TLS'
 
 
+def confirmation_prompt(text):
+    """Выделить запрос подтверждения, даже если вывод проходит через оболочку."""
+    if not sys.stdin.isatty() or 'NO_COLOR' in os.environ:
+        return text
+    return '\033[1;93m' + text + '\033[0m'
+
+
 def parse_yes_no(value):
     value = value.strip().lower()
     if value in ('y', 'yes', 'д', 'да'):
@@ -99,7 +106,8 @@ def collect(target):
     print('Секрет получен и проверен; его значение не выводится.')
     while True:
         try:
-            if not parse_yes_no(input('Начать установку с этими настройками? [Д/Н, по умолчанию Н]: ') or 'Н'):
+            prompt = confirmation_prompt('Начать установку с этими настройками? [Д/Н, по умолчанию Н]: ')
+            if not parse_yes_no(input(prompt) or 'Н'):
                 raise KeyboardInterrupt
             break
         except ValueError as e:
