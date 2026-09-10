@@ -65,6 +65,13 @@ def colored(text, *styles):
     return "".join(ANSI[x] for x in styles) + str(text) + ANSI["reset"]
 
 
+def confirmation_prompt(text):
+    """Жёлтый жирный запрос остаётся цветным при передаче stdout через tee."""
+    if not sys.stdin.isatty() or "NO_COLOR" in os.environ:
+        return str(text)
+    return ANSI["bold"] + ANSI["yellow"] + str(text) + ANSI["reset"]
+
+
 def utf8_output():
     """Return whether terminal symbols are safe for the current stdout."""
     encoding = getattr(sys.stdout, "encoding", None)
@@ -709,7 +716,7 @@ def ip_list(value):
 
 def ask_yes(label):
     while True:
-        answer = input(label + " [Д/Н]: ").strip().lower()
+        answer = input(confirmation_prompt(label + " [Д/Н]: ")).strip().lower()
         if answer in ("д", "да"):
             return True
         if answer in ("н", "нет"):
@@ -1234,7 +1241,7 @@ def menu():
         if command in ("ban", "unban", "allow", "disallow"):
             args.append(input(colored("  IP (для ручного бана также CIDR): ", "cyan")).strip())
         if command == "uninstall":
-            if input(colored("  Выполнить удаление? Введите Д: ", "red", "bold")).strip().lower() != "д":
+            if input(confirmation_prompt("  Выполнить удаление? Введите Д: ")).strip().lower() != "д":
                 continue
             args.append("--yes")
         try:

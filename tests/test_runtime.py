@@ -55,6 +55,14 @@ class ConfigTests(unittest.TestCase):
             self.assertFalse(r.parse_yes_no(text))
         with self.assertRaises(ValueError): r.parse_yes_no('maybe')
 
+    def test_confirmation_prompt_is_bold_yellow_only_in_terminal(self):
+        with patch.object(r.sys.stdin, 'isatty', return_value=True), \
+             patch.dict(r.os.environ, {}, clear=True):
+            prompt = r.confirmation_prompt('Подтвердить? ')
+        self.assertEqual(prompt, '\033[1;93mПодтвердить? \033[0m')
+        with patch.object(r.sys.stdin, 'isatty', return_value=False):
+            self.assertEqual(r.confirmation_prompt('Подтвердить? '), 'Подтвердить? ')
+
     def test_nginx_version_errors(self):
         for value in ['', '1.24', None, 'foo', '1.24.0;id']:
             with self.subTest(value=value), self.assertRaises(ValueError):
