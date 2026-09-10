@@ -20,6 +20,14 @@ sshd -t
 sshd -T > "$BASE/backups/sshd-effective-before.txt"
 SSH_DROPIN=/etc/ssh/sshd_config.d/00-cheburnet-vision.conf
 [[ ! -L $SSH_DROPIN ]] || { echo 'Ошибка: SSH drop-in является ссылкой.' >&2; exit 1; }
+# Первоначальный снимок хранится отдельно от отката текущей попытки
+if [[ ! -e $BASE/backups/sshd-initial.saved ]]; then
+    if [[ -f $SSH_DROPIN ]]; then
+        cp -p "$SSH_DROPIN" "$BASE/backups/sshd-dropin-initial.conf"
+    fi
+    cp -p "$BASE/backups/sshd-effective-before.txt" "$BASE/backups/sshd-effective-initial.txt"
+    touch "$BASE/backups/sshd-initial.saved"
+fi
 HAD_DROPIN=0
 if [[ -f $SSH_DROPIN ]]; then
     cp -p "$SSH_DROPIN" "$BASE/backups/sshd-dropin-before.conf"

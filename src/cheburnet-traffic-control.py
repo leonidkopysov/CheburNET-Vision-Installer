@@ -17,6 +17,7 @@ import re
 from pathlib import Path
 import shutil
 import socket
+import stat
 import subprocess
 import sys
 import tempfile
@@ -25,6 +26,7 @@ import time
 import urllib.request
 
 VERSION = "1.0.0"
+INTEGRATION_REVISION = "Vision 1.1.4"
 WIDTH = 78
 TABLE = "cheburnet_tc"
 ROOT = Path("/var/lib/cheburnet-traffic-control")
@@ -38,6 +40,10 @@ SOURCES = {name: BASE + name + ".list" for name in
            ("antiscanner", "government_networks", "skipa")}
 MAX_BYTES = 8 * 1024 * 1024
 MAX_ENTRIES = 150000
+# Консервативные ограничения внешних источников, а не ручных блокировок
+MIN_PREFIX = {4: 16, 6: 24}
+MAX_COVERAGE = {4: 4_000_000, 6: 2 ** 104}
+ACME_MARKER = Path('/run/cheburnet-vision-acme.active')
 LABEL_LIMIT = 100
 CA_CERT = Path("/etc/ssl/certs/ca-certificates.crt")
 OS_RELEASE = Path("/etc/os-release")
@@ -117,7 +123,7 @@ def term_width():
 
 
 def terminal_width():
-    """Fit the interface to the current terminal without exceeding 100 columns."""
+    """Ширина интерфейса ограничена текущим терминалом и WIDTH"""
     return term_width()
 
 
@@ -134,10 +140,10 @@ def message(kind, text, *styles, file=None):
     colors = {"ok": "green", "warn": "yellow", "error": "red", "info": "dim", "pending": "yellow"}
     prefix = f"  {symbol(marks[kind])} "
     available = max(1, terminal_width() - len(prefix))
-    lines = textwrap.wrap(str(text), width=available, replace_whitespace=False,
+    lines = textwrap.wrap(str(text).rstrip('.'), width=available, replace_whitespace=False,
                           drop_whitespace=True) or [""]
     for index, line in enumerate(lines):
-        rendered = (prefix if index == 0 else "  ") + line
+        rendered = (prefix if index == 0 else " " * len(prefix)) + line
         print(colored(rendered, colors[kind], *styles), file=file)
 
 
@@ -179,7 +185,6 @@ def field(label, value):
 
 
 def menu_line(key, label, style="white"):
-    style = "red" if key == "10" else "white"
     token = f"[{pad_left(key, 2)}] "
     prefix = "  " + token
     available = max(1, terminal_width() - len(prefix))
@@ -244,17 +249,20 @@ def missing_packages():
 
 
 def apt_install(packages):
-    info = os_release()
-    family = " ".join((info.get("ID", ""), info.get("ID_LIKE", ""))).lower().split()
+    release = os_release()
+    family = " ".join((release.get("ID", ""), release.get("ID_LIKE", ""))).lower().split()
     if not set(family) & {"debian", "ubuntu"} or not shutil.which("apt-get"):
         raise ValueError("Автоустановка пакетов поддерживается только в Ubuntu и Debian с apt-get.")
     env = os.environ.copy()
     env["DEBIAN_FRONTEND"] = "noninteractive"
-    pending("Обновляю индекс пакетов…")
-    subprocess.run(["apt-get", "update"], check=True, timeout=600, env=env)
-    pending("Устанавливаю: " + ", ".join(packages))
-    subprocess.run(["apt-get", "install", "-y", "--no-install-recommends", *packages],
-                   check=True, timeout=900, env=env)
+    env["NEEDRESTART_MODE"] = "a"
+    env["APT_LISTCHANGES_FRONTEND"] = "none"
+    pending("Обновление индекса пакетов")
+    subprocess.run(["apt-get", "-o", "DPkg::Lock::Timeout=600", "update"],
+                   check=True, timeout=900, env=env, umask=0o022)
+    pending("Установка пакетов: " + ", ".join(packages))
+    subprocess.run(["apt-get", "-o", "DPkg::Lock::Timeout=600", "--no-remove", "install", "-y",
+                    "--no-install-recommends", *packages], check=True, timeout=1800, env=env, umask=0o022)
 
 
 def ensure_dependencies(auto_install=False):
@@ -283,16 +291,48 @@ def networks(text):
         value = line.split("#", 1)[0].strip()
         if not value:
             continue
-        net = ipaddress.ip_network(value, strict=False)
-        if net.prefixlen == 0:
-            raise ValueError("Список содержит маршрут /0; применение запрещено.")
+        net = parse_network(value)
+        if net.prefixlen < MIN_PREFIX[net.version]:
+            raise ValueError(f"Слишком широкая сеть внешнего списка: {net}; обновление отклонено")
         result.append(net)
         if len(result) > MAX_ENTRIES:
             raise ValueError("Слишком много записей в списке.")
     if not result:
         raise ValueError("Пустой список не принимается.")
+    validate_coverage(result)
     return [str(n) for version in (4, 6) for n in ipaddress.collapse_addresses(
         n for n in result if n.version == version)]
+
+
+def parse_network(value):
+    try:
+        return ipaddress.ip_network(value, strict=False)
+    except ValueError:
+        raise ValueError('Некорректный IP или CIDR: ' + safe_label(value)) from None
+
+
+def validate_coverage(entries):
+    nets = [ipaddress.ip_network(n) for n in entries]
+    for version in (4, 6):
+        total = sum(n.num_addresses for n in ipaddress.collapse_addresses(
+            n for n in nets if n.version == version))
+        if total > MAX_COVERAGE[version]:
+            raise ValueError(f'Внешние списки охватывают слишком много адресов IPv{version}; обновление отклонено')
+
+
+def acme_remaining():
+    """Ограниченное по времени исключение под общей блокировкой с ACME-хуком"""
+    try:
+        st = ACME_MARKER.lstat()
+        if not stat.S_ISREG(st.st_mode) or st.st_uid != 0 or st.st_mode & 0o077 or st.st_size > 32:
+            raise ValueError('Небезопасная отметка временного разрешения ACME')
+        expires = int(ACME_MARKER.read_text(encoding='ascii').strip())
+        remaining = expires - int(time.time())
+        if remaining > 3600:
+            raise ValueError('Некорректный срок временного разрешения ACME')
+        return max(0, remaining)
+    except FileNotFoundError:
+        return 0
 
 
 class HTTPSOnly(urllib.request.HTTPRedirectHandler):
@@ -472,7 +512,9 @@ def print_logs():
 
 def fetch_lists():
     # No partial updates: failure of any of the three sources aborts the operation.
-    return {name: download(url) for name, url in SOURCES.items()}
+    lists = {name: download(url) for name, url in SOURCES.items()}
+    validate_coverage(n for entries in lists.values() for n in entries)
+    return lists
 
 
 def atomic(path, text, mode=0o600):
@@ -525,7 +567,10 @@ def load():
 
 
 def host(value):
-    return str(ipaddress.ip_address(value))
+    try:
+        return str(ipaddress.ip_address(value))
+    except ValueError:
+        raise ValueError('Укажите отдельный IP-адрес без CIDR: ' + safe_label(value)) from None
 
 
 def render(state, exists=False):
@@ -547,7 +592,14 @@ def render(state, exists=False):
             if nets:
                 lines += ["  elements = { " + ", ".join(map(str, nets)) + " };"]
             lines += [" }"]
-    lines += [" chain ingress {", "  type filter hook input priority -10; policy accept;",
+    remaining = acme_remaining()
+    if remaining:
+        lines += [' set acme_ports {', '  type inet_service;', '  flags timeout;',
+                  f'  elements = {{ 80 timeout {remaining}s }};', ' }']
+    lines += [" chain ingress {", "  type filter hook input priority -10; policy accept;"]
+    if remaining:
+        lines += ['  tcp dport @acme_ports counter return comment "CheburNET-Vision-ACME-temporary"']
+    lines += [
               '  iifname "lo" return', "  ct state established,related return",
               "  tcp dport { " + ", ".join(map(str, ports)) + " } return",
               "  ip saddr @allow4 return", "  ip6 saddr @allow6 return"]
@@ -707,14 +759,26 @@ def ip_list(value):
     return values
 
 
+def prompt_input(label):
+    # При tee вопросы идут в терминал, а не в журнал с ANSI-кодами
+    if sys.stdin.isatty():
+        with open('/dev/tty', 'w', encoding='utf-8') as tty:
+            decorated_label = label
+            if tty.isatty() and 'NO_COLOR' not in os.environ:
+                decorated_label = ANSI['bold'] + ANSI['yellow'] + label + ANSI['reset']
+            print(decorated_label, end='', file=tty, flush=True)
+        return input()
+    return input(label)
+
+
 def ask_yes(label):
     while True:
-        answer = input(label + " [Д/Н]: ").strip().lower()
-        if answer in ("д", "да"):
+        answer = prompt_input(label + " [Д/Y · Н/N]: ").strip().lower()
+        if answer in ("д", "да", "y", "yes"):
             return True
-        if answer in ("н", "нет"):
+        if answer in ("", "н", "нет", "n", "no"):
             return False
-        warn("Введите Д или Н.")
+        warn("Введите Д/Y — да или Н/N — нет")
 
 
 def brand_header():
@@ -761,7 +825,7 @@ def ask_value(label, candidate, validator):
             return validator(candidate)
     while True:
         try:
-            return validator(input("  " + label + " (введите своё значение): ").strip())
+            return validator(prompt_input("  " + label + " (введите своё значение): ").strip())
         except (ValueError, OSError):
             warn("Некорректное значение. Повторите ввод.")
 
@@ -816,7 +880,14 @@ def install_inputs(args):
     admins = ask_value('IP администратора', admin, ip_list)
     ports = ask_value('Порт SSH', port, port_list)
     panel = ask_value('Исходящие IP панели (или её домен для поиска)', panel_hint(), panel_input)
-    allowed = sorted(set(admins + panel))
+    while True:
+        extra = prompt_input('  IP входных и relay-нод через пробел (Enter — пропустить): ').strip()
+        try:
+            relays = ip_list(extra) if extra else []
+            break
+        except ValueError:
+            warn('Укажите отдельные IP-адреса входных нод без CIDR')
+    allowed = sorted(set(admins + panel + relays))
     info('Итог: SSH ' + ', '.join(map(str, ports)) + '; исключения IP: ' + ', '.join(allowed))
     if not ask_yes('  Установить с этими настройками?'):
         raise ValueError('Установка отменена. Настройки не записаны.')
@@ -1055,12 +1126,14 @@ def print_status(state):
     print(colored("  СОСТОЯНИЕ", "blue", "bold"))
     print()
     field("Версия", VERSION)
+    field("Редакция интеграции", INTEGRATION_REVISION)
     field("Таблица nftables", 'создана' if present() else 'отсутствует')
     field("Фильтрация", 'включена' if (ROOT / 'enabled').exists() else 'выключена')
     field("Операция включения", 'не завершена' if (ROOT / 'pending').exists() else 'нет незавершённых операций')
     field("Списки обновлены", format_updated(state.get('updated')))
     for name, entries in state["lists"].items():
-        field(name, f"{len(entries)} записей")
+        field({'antiscanner': 'Сканеры', 'government_networks': 'Госсети', 'skipa': 'СКИПА'}.get(name, name),
+              f"{len(entries)} записей")
     field("Порты SSH", ', '.join(map(str, state['ssh_ports'])))
     field("Исключения", ', '.join(state['allow']))
     field("Ручные блокировки", ', '.join(state['manual']) or '-')
@@ -1150,7 +1223,7 @@ def execute(args):
             if key == "allow":
                 value = host(args.address)
             else:
-                value = str(ipaddress.ip_network(args.address, strict=False))
+                value = str(parse_network(args.address))
                 if ipaddress.ip_network(value).prefixlen == 0:
                     raise ValueError("Блокировка /0 запрещена.")
             if cmd in ("ban", "allow"):
@@ -1197,44 +1270,44 @@ def menu():
             menu_line("1", "Установить компонент (фильтрация останется выключенной)", "green")
         else:
             menu_section("Просмотр")
-            menu_line("1", "Показать краткое состояние", "blue")
-            menu_line("2", "Обновить три внешних списка", "blue")
-            menu_line("11", "Самодиагностика и исправление", "magenta")
-            menu_line("12", "Показать полные правила nftables", "blue")
-            menu_line("13", "Показать последние журналы", "blue")
+            menu_line("1", "Показать краткое состояние")
+            menu_line("2", "Показать полные правила nftables")
+            menu_line("3", "Показать последние журналы")
+            menu_line("4", "Самодиагностика и исправление")
             menu_section("Списки")
-            menu_line("3", "Добавить ручной бан IP или CIDR", "yellow")
-            menu_line("4", "Снять точный ручной бан", "green")
-            menu_line("5", "Добавить IP в исключения", "green")
-            menu_line("6", "Удалить IP из исключений", "yellow")
+            menu_line("5", "Обновить три внешних списка")
+            menu_line("6", "Добавить ручную блокировку IP или CIDR")
+            menu_line("7", "Снять точную ручную блокировку")
+            menu_line("8", "Добавить IP в исключения")
+            menu_line("9", "Удалить IP из исключений")
             menu_section("Управление")
-            menu_line("7", "Включить фильтрацию", "white")
-            menu_line("9", "Выключить фильтрацию", "yellow")
-            menu_line("10", "Удаление программы и служб", "red")
+            menu_line("10", "Включить фильтрацию")
+            menu_line("11", "Выключить фильтрацию")
+            menu_line("12", "Удалить программу и службы", "red")
         menu_line("0", "Выход", "white")
         if installed:
             try:
-                top(limit=5 if height < 30 else 10)
+                top(resolve=False, limit=5 if height < 30 else 10)
             except (ValueError, OSError, subprocess.SubprocessError) as exc:
                 print()
-                err("Топ-10 временно недоступен: " + safe_label(exc))
+                err("Таблица блокировок временно недоступна: " + safe_label(exc))
         print()
         rule("─", style="cyan")
-        choice = input(colored("  Выберите действие: ", "cyan", "bold")).strip()
+        choice = prompt_input("  Выберите действие: ").strip()
         if choice == "0":
             return
         command = ("install" if not installed and choice == "1" else
-                   {"1": "status", "2": "update", "3": "ban", "4": "unban",
-                    "5": "allow", "6": "disallow", "7": "activate",
-                    "9": "disable", "10": "uninstall", "11": "check",
-                    "12": "rules", "13": "logs"}.get(choice) if installed else None)
+                   {"1": "status", "2": "rules", "3": "logs", "4": "check",
+                    "5": "update", "6": "ban", "7": "unban", "8": "allow",
+                    "9": "disallow", "10": "activate", "11": "disable",
+                    "12": "uninstall"}.get(choice) if installed else None)
         if not command:
             continue
         args = [command]
         if command in ("ban", "unban", "allow", "disallow"):
-            args.append(input(colored("  IP (для ручного бана также CIDR): ", "cyan")).strip())
+            args.append(prompt_input("  IP (для ручной блокировки также CIDR): ").strip())
         if command == "uninstall":
-            if input(colored("  Выполнить удаление? Введите Д: ", "red", "bold")).strip().lower() != "д":
+            if not ask_yes("  Удалить программу и службы?"):
                 continue
             args.append("--yes")
         try:
@@ -1247,7 +1320,7 @@ def menu():
             return
         if command == "install":
             continue
-        input(colored("  Enter — вернуться в меню: ", "dim"))
+        prompt_input("  Enter — вернуться в меню: ")
 
 
 def normalize_argv(argv):
@@ -1315,7 +1388,7 @@ def main(argv=None):
     inst.add_argument("--allow", action="append", default=[], metavar="IP",
                       help="добавить IP в исключения; параметр можно указать несколько раз")
     inst.add_argument("--yes", action="store_true",
-                      help="подтвердить автоматическую установку без вопросов")
+                      help="пропустить вступительное согласие; без вопросов только вместе с --ssh-port и --allow")
     inst.add_argument("--no-logging", action="store_false", dest="logging",
                       help="отключить журналирование блокировок")
     inst.set_defaults(logging=True)
@@ -1367,7 +1440,8 @@ def main(argv=None):
         args.yes = True
     try:
         if args.command != "check":
-            ensure_dependencies(auto_install=args.command in ("install", "repair"))
+            ensure_dependencies(auto_install=args.command in ("install", "repair") and
+                                os.environ.get('CHEBURNET_PACKAGES_PREPARED') != '1')
     except (ValueError, OSError, subprocess.SubprocessError) as exc:
         raise ValueError(str(exc)) from exc
     os.umask(0o077)
@@ -1385,7 +1459,7 @@ def main(argv=None):
 
 if __name__ == "__main__":
     try:
-        main()
+        sys.exit(1 if main() else 0)
     except KeyboardInterrupt:
         print(file=sys.stderr)
         message("info", "Операция прервана пользователем.", file=sys.stderr)

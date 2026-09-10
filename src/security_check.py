@@ -28,18 +28,21 @@ def capture(*args):
     return p.stdout.strip()
 
 
-def firewall(text, port, panel_ips):
+def firewall(text, port, panel_ips, required_families=(4,)):
     need('Status: active' in text, 'UFW не активен.')
     need('deny (incoming)' in text and 'deny (routed)' in text, 'Неверная политика UFW.')
     allowed = set(map(ipaddress.ip_address, panel_ips.split()))
     seen = set()
+    tls_open = set()
+    tls_denied = set()
     for line in text.splitlines():
         parts = re.split(r'\s{2,}', line.strip())
-        if len(parts) < 3 or not parts[1].startswith(('ALLOW', 'LIMIT')):
+        if len(parts) < 3 or not parts[1].startswith(('ALLOW', 'LIMIT', 'DENY', 'REJECT')):
             continue
         target, action, source = parts[:3]
         if 'OUT' in action:
             continue
+        family = 6 if '(v6)' in target else 4
         target = target.replace(' (v6)', '')
         source = source.split(' #')[0].replace(' (v6)', '')
         if target == 'OpenSSH':
@@ -61,6 +64,15 @@ def firewall(text, port, panel_ips):
                 if int(bounds[0]) <= p <= int(bounds[-1]):
                     return True
             return False
+        if matches(443):
+            if action.startswith(('DENY', 'REJECT')) and family not in tls_open:
+                tls_denied.add(family)
+            elif action.startswith('ALLOW') and source == 'Anywhere':
+                need(family not in tls_denied,
+                     'Перед разрешением TCP/443 найдено запрещающее правило UFW; требуется ручная проверка')
+                tls_open.add(family)
+        if action.startswith(('DENY', 'REJECT')):
+            continue
         need(not matches(80), 'TCP/80 постоянно разрешён в UFW. Удалите только подтверждённое лишнее правило.')
         if matches(port):
             try:
@@ -70,12 +82,17 @@ def firewall(text, port, panel_ips):
             need(addr in allowed, 'API разрешён постороннему IP.')
             seen.add(addr)
     need(seen == allowed, 'Не найдены все разрешения API для IP панели.')
+    need(set(required_families) <= tls_open, 'TCP/443 не открыт в UFW для всех используемых семейств адресов')
 
 
 def check_firewall():
     s = json.loads((BASE/'settings.json').read_text(encoding='utf-8'))
-    firewall(capture('ufw', 'status', 'verbose'), s['node_port'], s['panel_ips'])
-    print('✓ UFW: API ограничен IP панели; постоянного разрешения TCP/80 нет.')
+    families = {4}
+    defaults = Path('/etc/default/ufw').read_text(encoding='utf-8')
+    if re.search(r'^\s*IPV6\s*=\s*[\"\']?yes[\"\']?\s*(?:#.*)?$', defaults, re.M | re.I):
+        families.add(6)
+    firewall(capture('ufw', 'status', 'verbose'), s['node_port'], s['panel_ips'], families)
+    print('✓ UFW: TCP/443 разрешён, API ограничен IP панели; постоянного разрешения TCP/80 нет')
 
 
 def check():
@@ -147,7 +164,8 @@ def check():
         need(capture('systemctl','show','cheburnet-decoy.service',f'--property={prop}','--value') == expected,
              f'Не применена защита nginx: {prop}.')
     print('✓ Изоляция службы nginx включена; разрешён только AF_UNIX.')
-    for unit in ('docker.service', 'cheburnet-decoy.service', 'certbot.timer', 'fail2ban.service'):
+    for unit in ('docker.service', 'cheburnet-decoy.service', 'certbot.timer', 'fail2ban.service',
+                 'cheburnet-acme-expiry.timer'):
         need(capture('systemctl', 'is-active', unit) == 'active', f'Не активна служба {unit}.')
         need(capture('systemctl', 'is-enabled', unit) == 'enabled', f'Не включён автозапуск {unit}.')
     capture('fail2ban-client', 'status', 'sshd')

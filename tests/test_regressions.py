@@ -48,7 +48,7 @@ probe_http 'HTTP/2' http://localhost/
             source = SOURCE.replace('/etc/os-release', str(release))
             p = subprocess.run(['bash', '-c', source + '\nLOGO=original; identity=$(os_identity); printf "%s|%s|%s" "$identity" "$LOGO" "$CHEBURNET_VERSION"'], capture_output=True, text=True)
             self.assertEqual(p.returncode, 0, p.stderr)
-            self.assertEqual(p.stdout, 'debian::|original|1.1.3')
+            self.assertEqual(p.stdout, 'debian::|original|1.1.4')
 
     def test_cli_rejects_extra_args(self):
         for cmd in ('--install', '--resume', '--check', '--show', '--preview', '--version'):
@@ -59,7 +59,7 @@ probe_http 'HTTP/2' http://localhost/
     def test_version_without_root(self):
         p = shell('require_server(){ exit 99; }; main --version')
         self.assertEqual(p.returncode, 0)
-        self.assertEqual(p.stdout.strip(), '1.1.3')
+        self.assertEqual(p.stdout.strip(), '1.1.4')
 
     def test_cyrillic_answers_with_c_locale_and_redirected_stdout(self):
         with tempfile.TemporaryDirectory() as td:
@@ -132,7 +132,7 @@ apt-get(){
 }
 apt_confirmed full-upgrade
 ''', {'CONSENT': str(consent), 'FAIL': str(fail), 'COUNTER': str(Path(td)/'count')})
-                self.assertEqual(p.returncode, 1)
+                self.assertEqual(p.returncode, 130 if consent else 1)
                 self.assertNotIn('EXECUTED', p.stdout)
 
     def test_nat_query_errors_stop(self):
@@ -218,11 +218,12 @@ echo CONTINUED
 
     def test_resume_preserves_pending_exit_code(self):
         with tempfile.TemporaryDirectory() as td:
-            base = Path(td)/'node'; base.mkdir(); (base/'.cheburnet-managed').write_text('1.1.3\n')
+            base = Path(td)/'node'; base.mkdir(); (base/'.cheburnet-managed').write_text('1.1.4\n')
             source = SOURCE.replace('readonly BASE=/opt/remnanode', f'readonly BASE={base}').replace('/run/cheburnet-vision.lock', str(Path(td)/'lock'))
             for code in ('0', '2', '1'):
                 p = subprocess.run(['bash', '-c', source + '''
 require_server(){ :; }; check_ssh_collision(){ :; }; get_setting(){ echo 2222; }
+prepare_tuning_dependencies(){ :; }; confirm_panel_ready(){ return 0; }
 python3(){ :; }; bootstrap_project(){ :; }; prepare_stack(){ :; }; apply_tuning(){ :; }
 harden_host(){ :; }; start_stack(){ :; }; issue_certificate(){ :; }; install_traffic_control(){ :; }
 bash(){ return "$CHECK_CODE"; }; systemd-analyze(){ :; }; show_result(){ :; }

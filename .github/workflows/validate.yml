@@ -32,14 +32,18 @@ jobs:
           bash -n cheburnet-vision-install.sh
           sha256sum -c SHA256SUMS
 
-      - name: Установка ShellCheck
-        run: sudo apt-get update && sudo apt-get install -y shellcheck
+      - name: Установка инструментов проверки
+        run: sudo apt-get update && sudo apt-get install -y shellcheck nftables
+
+      - name: ACME и обновление списков в изолированном nftables namespace
+        run: sudo env CHEBURNET_TEST_NFT=1 unshare --net python3 -m unittest discover -s tests -p 'test_nft_namespace.py' -v
 
       - name: Проверка ShellCheck
         run: |
           shellcheck -S style src/installer.sh cheburnet-vision-install.sh
           shellcheck -S style src/acme-firewall.sh src/acme-pre.sh src/acme-post.sh
           shellcheck -S style src/hardening.sh src/renew-hook.sh src/check-nofile.sh
+          shellcheck -S style src/cheburnet-two-way-ping.sh
 
   release:
     needs: validate

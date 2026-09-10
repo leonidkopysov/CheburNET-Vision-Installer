@@ -18,11 +18,34 @@ BASE = '/opt/remnanode'
 TAG = 'Vision-TLS'
 
 
+class Cancelled(Exception):
+    """Отказ пользователя не является ошибкой конфигурации"""
+
+
+class ServiceParser(argparse.ArgumentParser):
+    def error(self, message):
+        self.exit(1, '  ✗ ОШИБКА: некорректные аргументы служебной команды\n')
+
+
+def prompt_label(text):
+    if sys.stdin.isatty() and 'NO_COLOR' not in os.environ:
+        return '\033[1;33m' + text + '\033[0m'
+    return text
+
+
+def ask(text):
+    if sys.stdin.isatty():
+        with open('/dev/tty', 'w', encoding='utf-8') as tty:
+            print(prompt_label(text), end='', file=tty, flush=True)
+        return input()
+    return input(text)
+
+
 def parse_yes_no(value):
     value = value.strip().lower()
     if value in ('y', 'yes', 'д', 'да'):
         return True
-    if value in ('n', 'no', 'н', 'нет'):
+    if value in ('', 'n', 'no', 'н', 'нет'):
         return False
     raise ValueError('Введите Д — да или Н — нет.')
 
@@ -50,7 +73,10 @@ def validate(settings):
     if not ips or not ips[0]:
         raise ValueError('Укажите IP исходящих подключений панели.')
     for ip in ips:
-        address = ipaddress.ip_address(ip)  # Только отдельные IP-адреса, без CIDR.
+        try:
+            address = ipaddress.ip_address(ip)
+        except ValueError:
+            raise ValueError('Укажите отдельные IP-адреса панели без CIDR, домена и порта') from None
         if address.is_unspecified or address.is_multicast or address.is_loopback:
             raise ValueError('Нужен реальный исходящий IP панели, не wildcard/loopback/multicast.')
     s['panel_ips'] = ' '.join(dict.fromkeys(str(ipaddress.ip_address(x)) for x in ips))
@@ -80,7 +106,7 @@ def collect(target):
               ('email', "Email для сертификата Let's Encrypt", None)]
     for field, label, default in fields:
         while True:
-            value = input(label + (f' [{default}]' if default else '') + ': ')
+            value = ask(label + (f' [{default}]' if default else '') + ': ')
             value = value or default or ''
             try:
                 s = validate(dict(s, **{field: value}))
@@ -89,7 +115,7 @@ def collect(target):
                 print(f'Ошибка: {e} Повторите только это поле.', file=sys.stderr)
     print(f'Образ: {NODE_IMAGE}; версия панели {s["panel_version"]} прошла проверку требований SNI.')
     while True:
-        secret = getpass.getpass('Секретный ключ ноды из панели (ввод скрыт): ')
+        secret = getpass.getpass(prompt_label('Секретный ключ ноды из панели (ввод скрыт): '))
         try:
             validate_key(secret)
             break
@@ -99,8 +125,8 @@ def collect(target):
     print('Секрет получен и проверен; его значение не выводится.')
     while True:
         try:
-            if not parse_yes_no(input('Начать установку с этими настройками? [Д/Н, по умолчанию Н]: ') or 'Н'):
-                raise KeyboardInterrupt
+            if not parse_yes_no(ask('Начать установку с этими настройками? [Д/Y · Н/N]: ')):
+                raise Cancelled
             break
         except ValueError as e:
             print(e, file=sys.stderr)
@@ -112,7 +138,7 @@ def validate_dns_records(a_records, aaaa_records, local_addresses):
     resolved = {ipaddress.ip_address(x) for x in (*a_records, *aaaa_records)}
     local = {ipaddress.ip_address(x) for x in local_addresses}
     if not resolved:
-        raise ValueError('У домена нет IP-адреса этого сервера.')
+        raise ValueError('У домена нет A/AAAA-записей')
     wrong = resolved - local
     if wrong:
         raise ValueError('DNS содержит адреса другого сервера/CDN: ' + ', '.join(sorted(map(str, wrong))) +
@@ -336,7 +362,7 @@ ALPN:           h2,http/1.1
 
 
 def main():
-    p = argparse.ArgumentParser()
+    p = ServiceParser()
     p.add_argument('action', choices=['render', 'validate-key', 'collect', 'check-dns'])
     p.add_argument('--settings')
     p.add_argument('--output')
@@ -353,11 +379,11 @@ def main():
             key = Path(args.key_file).read_text(encoding='utf-8').rstrip('\n') if args.key_file else None
             render(json.loads(Path(args.settings).read_text(encoding='utf-8')), args.output, key)
     except (ValueError, KeyError, OSError, subprocess.TimeoutExpired) as e:
-        print(f'Ошибка: {e}', file=sys.stderr)
-        sys.exit(2)
-    except (EOFError, KeyboardInterrupt):
-        print('\nВвод отменён; конфигурация не сохранена.', file=sys.stderr)
-        sys.exit(2)
+        print(f'  ✗ ОШИБКА: {e}', file=sys.stderr)
+        sys.exit(1)
+    except (Cancelled, EOFError, KeyboardInterrupt):
+        print('\n  ! Ввод отменён; конфигурация не сохранена', file=sys.stderr)
+        sys.exit(130)
 
 
 if __name__ == '__main__':
