@@ -48,7 +48,7 @@ probe_http 'HTTP/2' http://localhost/
             source = SOURCE.replace('/etc/os-release', str(release))
             p = subprocess.run(['bash', '-c', source + '\nLOGO=original; identity=$(os_identity); printf "%s|%s|%s" "$identity" "$LOGO" "$CHEBURNET_VERSION"'], capture_output=True, text=True)
             self.assertEqual(p.returncode, 0, p.stderr)
-            self.assertEqual(p.stdout, 'debian::|original|1.1.4')
+            self.assertEqual(p.stdout, 'debian::|original|1.1.5')
 
     def test_cli_rejects_extra_args(self):
         for cmd in ('--install', '--resume', '--check', '--show', '--preview', '--version'):
@@ -59,7 +59,7 @@ probe_http 'HTTP/2' http://localhost/
     def test_version_without_root(self):
         p = shell('require_server(){ exit 99; }; main --version')
         self.assertEqual(p.returncode, 0)
-        self.assertEqual(p.stdout.strip(), '1.1.4')
+        self.assertEqual(p.stdout.strip(), '1.1.5')
 
     def test_cyrillic_answers_with_c_locale_and_redirected_stdout(self):
         with tempfile.TemporaryDirectory() as td:
@@ -216,9 +216,22 @@ echo CONTINUED
             self.assertFalse(base.exists())
             self.assertEqual(list(root.glob('node.staging.*')), [])
 
+    def test_stale_staging_cleanup_checks_mode_before_removal(self):
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)/'node'
+            source = SOURCE.replace('readonly BASE=/opt/remnanode', f'readonly BASE={base}')
+            safe = Path(str(base)+'.staging.safe'); safe.mkdir(mode=0o700)
+            p = subprocess.run(['bash', '-c', source + '\ncleanup_stale_staging'], capture_output=True, text=True)
+            self.assertEqual(p.returncode, 0, p.stderr)
+            self.assertFalse(safe.exists())
+            suspicious = Path(str(base)+'.staging.suspicious'); suspicious.mkdir(mode=0o755)
+            p = subprocess.run(['bash', '-c', source + '\ncleanup_stale_staging'], capture_output=True, text=True)
+            self.assertEqual(p.returncode, 1)
+            self.assertTrue(suspicious.exists())
+
     def test_resume_preserves_pending_exit_code(self):
         with tempfile.TemporaryDirectory() as td:
-            base = Path(td)/'node'; base.mkdir(); (base/'.cheburnet-managed').write_text('1.1.4\n')
+            base = Path(td)/'node'; base.mkdir(); (base/'.cheburnet-managed').write_text('1.1.5\n')
             source = SOURCE.replace('readonly BASE=/opt/remnanode', f'readonly BASE={base}').replace('/run/cheburnet-vision.lock', str(Path(td)/'lock'))
             for code in ('0', '2', '1'):
                 p = subprocess.run(['bash', '-c', source + '''

@@ -6,7 +6,7 @@ import tempfile
 import unittest
 
 ROOT=Path(__file__).resolve().parents[1]
-SOURCE=(ROOT/'src/installer.sh').read_text().split('# Private child entry')[0]
+SOURCE=(ROOT/'src/installer.sh').read_text().split('# Внутренняя точка входа для дочернего процесса')[0]
 
 
 def shell(code,env=None):
@@ -124,7 +124,7 @@ wait_api
             self.assertIn('слушает API',result.stdout)
 
     def test_nofile_numeric_and_unlimited(self):
-        fn=(ROOT/'src/check-nofile.sh').read_text().split('# Read this shell')[0]
+        fn=(ROOT/'src/check-nofile.sh').read_text().split('# Читаем фактические Linux-лимиты')[0]
         for value,ok in [('unlimited',True),('1048576',True),('2097152',True),('1024',False),('',False),('broken',False)]:
             with self.subTest(value=value):
                 r=subprocess.run(['sh','-c',fn+'\nlimit_ok "$1"','test',value],capture_output=True)

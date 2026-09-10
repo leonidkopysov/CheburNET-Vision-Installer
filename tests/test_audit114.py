@@ -1,8 +1,9 @@
-"""Регрессии 1.1.4: без изменений служб, пакетов и firewall хоста"""
+"""Регрессии 1.1.5: без изменений служб, пакетов и firewall хоста"""
 import ast
 import contextlib
 import importlib.util
 import io
+import json
 import os
 from pathlib import Path
 import subprocess
@@ -14,6 +15,7 @@ from unittest.mock import patch
 
 from test_shell import SOURCE, shell
 from test_security import UFW
+from test_runtime import SETTINGS
 import runtime
 import security_check as security
 
@@ -28,7 +30,7 @@ def state():
                 lists={'test': ['198.51.100.0/24']}, logging=True, updated=1)
 
 
-class Audit114Tests(unittest.TestCase):
+class Audit115Tests(unittest.TestCase):
     def test_firewall_requires_public_443(self):
         text = '\n'.join(line for line in UFW.splitlines() if '443' not in line)
         with self.assertRaisesRegex(security.CheckFailure, 'TCP/443'):
@@ -110,7 +112,7 @@ class Audit114Tests(unittest.TestCase):
     def test_certificate_mismatch_with_exit_zero_rejected(self):
         p = shell('openssl(){ echo "Hostname wrong.example does NOT match certificate"; }; verify_certificate_name ignored wrong.example')
         self.assertEqual(p.returncode, 1)
-        self.assertIn('Сертификат не выдан', p.stderr)
+        self.assertIn('Сертификат выдан не на домен', p.stderr)
         p = shell('openssl(){ echo "Hostname good.example does match certificate"; }; verify_certificate_name ignored good.example')
         self.assertEqual(p.returncode, 0)
 
@@ -156,7 +158,7 @@ printf '|%s' "$(umask)"
 
     def test_panel_no_skips_final_diagnostics(self):
         with tempfile.TemporaryDirectory() as td:
-            base = Path(td)/'node'; base.mkdir(); (base/'.cheburnet-managed').write_text('1.1.4\n')
+            base = Path(td)/'node'; base.mkdir(); (base/'.cheburnet-managed').write_text('1.1.5\n')
             source = SOURCE.replace('readonly BASE=/opt/remnanode', f'readonly BASE={base}').replace(
                 '/run/cheburnet-vision.lock', str(Path(td)/'lock'))
             stubs = '''
@@ -218,6 +220,55 @@ main --resume
             ports, allowed = tc.install_inputs(args)
             self.assertEqual(ports, [22])
             self.assertEqual(allowed, ['203.0.113.1', '203.0.113.2', '203.0.113.3'])
+
+    def test_debian_13_packages_and_fail2ban_backend(self):
+        installer = (ROOT/'src/installer.sh').read_text(encoding='utf-8')
+        tuning = (ROOT/'vendor/cheburnet-auto-tuning.sh').read_text(encoding='utf-8')
+        self.assertIn('bind9-dnsutils', installer)
+        self.assertIn('python3-systemd', installer)
+        self.assertNotIn(' python3 dnsutils ', installer)
+        self.assertIn("[[ -e /var/log/auth.log ]] || F2B_BACKEND='backend = systemd'", tuning)
+        self.assertIn('${F2B_BACKEND}', tuning)
+
+    def test_image_and_docker_key_are_pre_pinned(self):
+        installer = (ROOT/'src/installer.sh').read_text(encoding='utf-8')
+        self.assertRegex(runtime.NODE_IMAGE, r'^remnawave/node:3\.4\.1@sha256:[0-9a-f]{64}$')
+        self.assertIn('9DC858229FC7DD38854AE2D88D81803C0EBFCD88', installer)
+        self.assertIn('apt_apply update', installer)
+        self.assertNotIn("v['services']['remnanode']['image']=digest", installer)
+
+    def test_decoy_recovers_and_is_unique_per_install(self):
+        unit = (ROOT/'src/cheburnet-decoy.service').read_text(encoding='utf-8')
+        installer = (ROOT/'src/installer.sh').read_text(encoding='utf-8')
+        self.assertIn('ExecStartPre=+/usr/bin/install -d -m 0755', unit)
+        self.assertIn('ExecStartPre=+/usr/bin/rm -f', unit)
+        self.assertLess(unit.index('ExecStartPre=+/usr/bin/rm -f'), unit.index('nginx -t'))
+        self.assertIn('site-variant:', installer)
+        self.assertIn('python3 -B - "$BASE"', installer)
+        self.assertIn('error_log stderr warn;', runtime.nginx(dict(SETTINGS, nginx_version='1.24.0')))
+
+    def test_profile_blocks_node_addresses_not_analytics_dashboards(self):
+        profile = runtime.profile(dict(SETTINGS, server_ips=['203.0.113.77', '2001:db8::77']))
+        encoded = json.dumps(profile)
+        self.assertIn('203.0.113.77', encoded)
+        self.assertIn('2001:db8::77', encoded)
+        self.assertIn('domain:mc.yandex.ru', encoded)
+        self.assertIn('domain:google-analytics.com', encoded)
+        self.assertNotIn('domain:metrika.yandex.ru', encoded)
+        self.assertNotIn('domain:analytics.google.com', encoded)
+
+    def test_service_state_and_snapshot_rotation_regressions(self):
+        security = (ROOT/'src/security_check.py').read_text(encoding='utf-8')
+        tuning = (ROOT/'vendor/cheburnet-auto-tuning.sh').read_text(encoding='utf-8')
+        self.assertIn("state('systemctl', 'is-active', unit)", security)
+        self.assertIn("-name 'pre-v*-*'", tuning)
+        self.assertNotIn("-name 'pre-v5.9.*-*'", tuning)
+
+    def test_decoy_prose_has_sentence_punctuation(self):
+        page = (ROOT/'src/decoy.html').read_text(encoding='utf-8')
+        self.assertIn('чтобы быть интереснее. Замечаем детали', page)
+        self.assertIn('Не удалось сохранить заметку. Текст остался', page)
+        self.assertNotIn('Фраза. «Не удалось', page)
 
 
 if __name__ == '__main__':

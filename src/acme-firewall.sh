@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 umask 077
 export LC_ALL=C
-# Only rules with this exact owned comment are removed. Never reset the firewall.
+# Удаляются только правила с точно этим управляемым комментарием; межсетевой экран не сбрасывается
 readonly OWN_COMMENT=CheburNET-Vision-ACME-temporary
 readonly ACME_MARKER=/run/cheburnet-vision-acme.active
 # Та же блокировка, что у TC: обновление списков сохраняет активное исключение

@@ -26,7 +26,7 @@ import time
 import urllib.request
 
 VERSION = "1.0.0"
-INTEGRATION_REVISION = "Vision 1.1.4"
+INTEGRATION_REVISION = "Vision 1.1.5"
 WIDTH = 78
 TABLE = "cheburnet_tc"
 ROOT = Path("/var/lib/cheburnet-traffic-control")
@@ -662,7 +662,7 @@ Type=oneshot
 ExecStart={BIN} update
 TimeoutStartSec=300
 """,
-        UNIT + "-update.timer": f"""[Unit]
+        UNIT + "-update.timer": """[Unit]
 Description=ЧебурNET Traffic Control: ежедневное обновление списков
 [Timer]
 OnBootSec=15min

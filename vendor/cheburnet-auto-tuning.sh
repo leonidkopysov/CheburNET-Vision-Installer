@@ -233,7 +233,6 @@ FSTRIM_BIN=$(command -v fstrim || true)
 FINDMNT_BIN=$(command -v findmnt || true)
 LSBLK_BIN=$(command -v lsblk || true)
 DF_BIN=$(command -v df || true)
-CURL_BIN=$(command -v curl || true)
 CERTBOT_BIN=$(command -v certbot || true)
 OPENSSL_BIN=$(command -v openssl || true)
 CRONTAB_BIN=$(command -v crontab || true)
@@ -1316,7 +1315,7 @@ fi
 # Ограничение истории резервных копий и снимков
 # ============================================================
 
-mapfile -t OLD_SNAPS < <(find "$SNAPSHOT_DIR" -maxdepth 1 -type f -name 'pre-v5.9.*-*' -printf '%T@ %p\n' 2>/dev/null | sort -nr | awk 'NR>10 {print $2}')
+mapfile -t OLD_SNAPS < <(find "$SNAPSHOT_DIR" -maxdepth 1 -type f -name 'pre-v*-*' -printf '%T@ %p\n' 2>/dev/null | sort -nr | awk 'NR>10 {print $2}')
 if ((${#OLD_SNAPS[@]})); then rm -f "${OLD_SNAPS[@]}"; fi
 
 mapfile -t OLD_BACKUPS < <(find "$BACKUP_DIR" -maxdepth 1 -type f -printf '%T@ %p\n' 2>/dev/null | sort -nr | awk 'NR>15 {print $2}')
@@ -1535,7 +1534,6 @@ info "tcp_mem/udp_mem оставлены на авторасчёте ядра; o
 
 section "ZRAM И БЕЗОПАСНЫЕ VM-НАСТРОЙКИ"
 
-ZRAM_CHANGED=0
 ZRAM_REPAIRED=0
 ZRAM_MANAGED_BY_CHEBURNET=0
 ZRAM_STATUS="не проверен"
@@ -1899,7 +1897,6 @@ EOF
         sleep 1
         ZRAM_ACTIVE_DEV=$(get_active_zram)
         if [[ -n $ZRAM_ACTIVE_DEV ]]; then
-            ZRAM_CHANGED=1
             ZRAM_MANAGED_BY_CHEBURNET=1
             ZRAM_STATUS="ЧебурNET ${ZRAM_SIZE_MB} MB (${ZRAM_ACTIVE_DEV})"
             ok "ZRAM создан/восстановлен: ${ZRAM_ACTIVE_DEV}, ${ZRAM_SIZE_MB} MB, priority=100"
@@ -2830,6 +2827,8 @@ if [[ $SECURITY_ENABLED == 1 && -n $SSHD_BIN ]]; then
             ok "Fail2ban: существующий jail sshd активен; настройки пользователя не изменяются"
         else
             F2B_CONF=/etc/fail2ban/jail.d/99-cheburnet-sshd.conf
+            F2B_BACKEND=''
+            [[ -e /var/log/auth.log ]] || F2B_BACKEND='backend = systemd'
             F2B_BACKUP=""
             mkdir -p /etc/fail2ban/jail.d
             if [[ -f $F2B_CONF ]]; then
@@ -2840,6 +2839,7 @@ if [[ $SECURITY_ENABLED == 1 && -n $SSHD_BIN ]]; then
 # ЧебурNET — защита SSH
 [sshd]
 enabled = true
+${F2B_BACKEND}
 port = ${SSH_PORT_CSV:-22}
 maxretry = 5
 findtime = 600
@@ -4142,7 +4142,7 @@ elif [[ -n $CERTBOT_BIN || -d /etc/letsencrypt ]]; then
         ok "Certbot: найдено renewal-конфигураций: $CERT_COUNT"
         if [[ -z $CERTBOT_BIN ]]; then
             CERT_VERIFY_OK=0
-            warn "Найдены renewal-конфигурации Let's Encrypt, но команда certbot недоступна."
+            warn "Найдены renewal-конфигурации Let’s Encrypt, но команда certbot недоступна."
         fi
         certbot_http01_scan
         certbot_expiry_audit

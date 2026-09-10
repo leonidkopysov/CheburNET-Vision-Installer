@@ -12,8 +12,8 @@ import subprocess
 import sys
 import tempfile
 
-NODE_IMAGE = 'remnawave/node:3.4.1'
-# Fixed installation layout, not an operator-configurable path.
+NODE_IMAGE = 'remnawave/node:3.4.1@sha256:0cdf386dd49f360fc885bb34bde21132e478e40f0deac62d616086ec0fa9257e'
+# Фиксированное размещение служебных файлов
 BASE = '/opt/remnanode'
 TAG = 'Vision-TLS'
 
@@ -76,7 +76,7 @@ def validate(settings):
         try:
             address = ipaddress.ip_address(ip)
         except ValueError:
-            raise ValueError('Укажите отдельные IP-адреса панели без CIDR, домена и порта') from None
+            raise ValueError('Укажите отдельные IP-адреса панели без CIDR, домена и порта.') from None
         if address.is_unspecified or address.is_multicast or address.is_loopback:
             raise ValueError('Нужен реальный исходящий IP панели, не wildcard/loopback/multicast.')
     s['panel_ips'] = ' '.join(dict.fromkeys(str(ipaddress.ip_address(x)) for x in ips))
@@ -95,15 +95,15 @@ def validate(settings):
 
 
 def collect(target):
-    # Validate each field independently; ask for the secret only after all others are valid.
+    # Каждое поле проверяется отдельно; секрет запрашивается после остальных полей
     s = dict(domain='node.example.com', node_port=2222, panel_ips='203.0.113.10',
              panel_version='3.4.3', email='operator@example.com')
-    print('Обозначения: Д — да · Н — нет. Enter принимает значение в скобках.')
+    print('Обозначения: Д/Y — да · Н/N — нет. Enter принимает значение в скобках.')
     fields = [('domain', 'Домен ноды (без https://)', None),
               ('node_port', 'Порт API ноды, такой же в панели', '2222'),
               ('panel_ips', 'IP исходящих подключений панели (через пробел)', None),
               ('panel_version', 'Версия панели 3.x (3.3.0+; проверка совместимости SNI)', None),
-              ('email', "Email для сертификата Let's Encrypt", None)]
+              ('email', "Email для сертификата Let’s Encrypt", None)]
     for field, label, default in fields:
         while True:
             value = ask(label + (f' [{default}]' if default else '') + ': ')
@@ -162,7 +162,9 @@ def preflight_dns(settings):
     interfaces = json.loads(capture('ip', '-j', 'address', 'show'))
     local = [a['local'] for i in interfaces for a in i.get('addr_info', []) if a.get('scope') == 'global']
     validate_dns_records(records['A'], records['AAAA'], local)
+    settings['server_ips'] = list(dict.fromkeys(records['A'] + records['AAAA']))
     print('✓ Все IP-адреса домена совпадают с адресами интерфейсов сервера.')
+    return settings
 
 
 def write(path, content, mode=0o600):
@@ -229,24 +231,25 @@ def profile(s):
             {'type': 'field', 'port': '443', 'network': 'udp', 'inboundTag': [TAG], 'outboundTag': 'BLOCK'},
             {'type': 'field', 'port': '25', 'network': 'tcp', 'outboundTag': 'BLOCK'},
             {'type': 'field', 'protocol': ['bittorrent'], 'outboundTag': 'BLOCK'},
-            {'type': 'field', 'ip': ['geoip:private'], 'outboundTag': 'BLOCK'},
+            {'type': 'field', 'ip': list(dict.fromkeys(['geoip:private', *s.get('server_ips', [])])),
+             'outboundTag': 'BLOCK'},
             {'type': 'field', 'domain': ['geosite:private'], 'outboundTag': 'BLOCK'},
             {'type': 'field', 'domain': [
-                'geosite:category-ads-all', 'domain:analytics.google.com', 'domain:adjust.net.in',
-                'domain:amplitude.com', 'domain:metrika.yandex.ru', 'domain:mytracker.ru',
+                'geosite:category-ads-all', 'domain:google-analytics.com', 'domain:adjust.net.in',
+                'domain:amplitude.com', 'domain:mc.yandex.ru', 'domain:mytracker.ru',
             ], 'outboundTag': 'BLOCK'},
         ], 'domainStrategy': 'IPIfNonMatch'},
     }
 
 
 def nginx(s):
-    # The legacy listen parameter also works on newer nginx (with a deprecation warning).
+    # Старый параметр listen работает и в новом nginx, но вызывает предупреждение
     version = nginx_version(s.get('nginx_version', '1.24.0'))
     h2listen = '' if version >= (1, 25, 1) else ' http2'
     h2on = '        http2 on;\n' if version >= (1, 25, 1) else ''
     return '''user www-data;
 worker_processes auto;
-error_log /var/log/nginx/cheburnet-error.log warn;
+error_log stderr warn;
 pid /run/cheburnet-nginx/nginx.pid;
 events { worker_connections 1024; }
 http {
@@ -291,7 +294,7 @@ def compose(s):
                      'cap_add': ['NET_ADMIN'],
                      'security_opt': ['no-new-privileges:true'],
                      # Matches NOFILE_TARGET in the pinned CheburNET tuning v1.0.0.
-                     # Installer provisions it before first start, check() verifies the result.
+                     # Установщик создаёт каталог до первого запуска, а check() проверяет результат
                      'ulimits': {'nofile': {'soft': 1048576, 'hard': 1048576}},
                      'volumes': ['/etc/letsencrypt:/etc/letsencrypt:ro',
                                  './fallback-sockets:/run/xray-fallback:ro',
@@ -300,7 +303,7 @@ def compose(s):
 
 
 def validate_key(key):
-    # Do not strip or silently repair a damaged secret. Pass the exact bytes to Docker.
+    # Повреждённый секрет не обрезается и не исправляется незаметно; Docker получает точные байты
     if not key or len(key) > 65536 or not re.fullmatch(r'[A-Za-z0-9+/=_-]+', key):
         raise ValueError('SECRET_KEY должен быть одной строкой Base64 из панели.')
     try:
@@ -372,7 +375,10 @@ def main():
         if args.action == 'collect':
             collect(args.output)
         elif args.action == 'check-dns':
-            preflight_dns(validate(json.loads(Path(args.settings).read_text(encoding='utf-8'))))
+            settings_path = Path(args.settings)
+            settings = preflight_dns(validate(json.loads(settings_path.read_text(encoding='utf-8'))))
+            json_write(settings_path, settings)
+            json_write(settings_path.parent/'vision-config-profile.json', profile(settings))
         elif args.action == 'validate-key':
             validate_key(Path(args.key_file).read_text(encoding='utf-8').rstrip('\n'))
         else:

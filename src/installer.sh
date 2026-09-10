@@ -11,7 +11,7 @@ set -Eeuo pipefail
 umask 077
 export LC_ALL=C.UTF-8
 export PYTHONUTF8=1
-readonly CHEBURNET_VERSION=1.1.4
+readonly CHEBURNET_VERSION=1.1.5
 # Фиксированный каталог используется службами systemd и хуками.
 readonly BASE=/opt/remnanode
 WORK=''
@@ -24,26 +24,26 @@ if [[ -t 1 && ! -v NO_COLOR ]]; then
     CYAN=$'\033[36m'; GREEN=$'\033[32m'; YELLOW=$'\033[33m'; RED=$'\033[31m'
     BOLD=$'\033[1m'; RESET=$'\033[0m'
 fi
-say() { local text=$*; printf '%s\n' "${text%.}"; }
+say() { printf '%s\n' "$*"; }
 step() {
     local border='----------------------------------------------'
     [[ ! -t 1 || -v NO_COLOR ]] || border='━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
     printf '\n%s%s%s\n  %s\n%s%s\n' "$BOLD" "$CYAN" "$border" "$*" "$border" "$RESET"
 }
-ok() { local text=$*; printf '  %s✓%s %s\n' "$GREEN" "$RESET" "${text%.}"; }
-warn() { local text=$*; printf '  %s!%s %s\n' "$YELLOW" "$RESET" "${text%.}"; }
-skip() { local text=$*; printf '  ○ %s\n' "${text%.}"; }
+ok() { printf '  %s✓%s %s\n' "$GREEN" "$RESET" "$*"; }
+warn() { printf '  %s!%s %s\n' "$YELLOW" "$RESET" "$*"; }
+skip() { printf '  ○ %s\n' "$*"; }
 banner() {
     step "ЧебурNET · VISION / $CHEBURNET_VERSION"
     say '  Установка и настройка VPN-ноды'
     say '  Автор и разработчик: Леонид Копысов'
     say '  GitHub: leonidkopysov · Telegram: @kopysovleonid'
     say ''
-    say '  ◆ RemnaNode для подключения к панели Remnawave'
+    say '  ◆ Remnawave Node для подключения к панели Remnawave'
     say '  ◆ VLESS с TLS 1.3 и режимом Vision'
-    say '  ◆ Нейтральный сайт на nginx через два Unix-сокета'
-    say "  ◆ Сертификат Let's Encrypt и автоматическое продление"
-    say '  ◆ Продвинутая настройка ЧебурNET: сеть, ZRAM, защита сервера'
+    say '  ◆ Сайт-заглушка на nginx через два Unix-сокета'
+    say "  ◆ Сертификат Let’s Encrypt и автоматическое продление"
+    say '  ◆ Расширенная настройка ЧебурNET: сеть, ZRAM, защита сервера'
     say '  ◆ Ограничение API IP-адресами панели, защита служб и SSH'
     say '  ◆ Защита от входящих ICMP echo и timestamp-запросов'
     say '  ◆ ЧебурNET Traffic Control — опционально: фильтрация по трём внешним спискам'
@@ -52,7 +52,7 @@ banner() {
     say '  Нужен отдельный сервер с прямым IP и доменом без CDN.'
     say '  Системные компоненты и обновления будут проверены перед настройкой.'
     say ''
-    say '  Д/Y — да · Н/N — нет. Enter без ответа означает «Нет».'
+    say '  Д/Y — да · Н/N — нет. Пустой ответ (Enter) — «Нет».'
     say '  ✓ выполнено · ○ пропущено · ! внимание · ✗ ошибка'
 }
 ask_yes() {
@@ -71,8 +71,8 @@ ask_yes() {
     done
 }
 confirm_install() { ask_yes 'Установить ноду ЧебурNET Vision?'; }
-die() { local text=$*; printf '\n  %s%s✗ ОШИБКА:%s %s\n' "$BOLD" "$RED" "$RESET" "${text%.}" >&2; exit 1; }
-# shellcheck disable=SC2317
+die() { printf '\n  %s%s✗ ОШИБКА:%s %s\n' "$BOLD" "$RED" "$RESET" "$*" >&2; exit 1; }
+# shellcheck disable=SC2317,SC2329
 cleanup() {
     if [[ ${ACME_OPEN:-0} == 1 ]]; then "$BASE/acme-firewall.sh" close || true; fi
     [[ -z $WORK ]] || rm -rf -- "$WORK"
@@ -82,7 +82,7 @@ trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 # Вызывается косвенно через ERR-ловушку
-# shellcheck disable=SC2317
+# shellcheck disable=SC2317,SC2329
 report_error() {
     local rc=$1 line=$2
     if (( rc == 130 || rc == 143 )); then
@@ -112,7 +112,7 @@ unpack() {
       sha256sum -c --status -; then
         die 'Контрольная сумма встроенного архива не совпала. Установка остановлена.'
     fi
-    if ! tar -xzf "$WORK/bundle.tar.gz" -C "$WORK" 2>/dev/null; then
+    if ! tar --no-same-owner --no-same-permissions -xzf "$WORK/bundle.tar.gz" -C "$WORK" 2>/dev/null; then
         die 'Не удалось распаковать проверенный встроенный архив.'
     fi
 }
@@ -138,7 +138,7 @@ os_identity() (
 
 require_server() {
     (( EUID == 0 )) || die 'Запустите скрипт от имени root'
-    [[ -d /run/systemd/system ]] || die 'Нужен сервер с systemd, не контейнер/chroot.'
+    [[ -d /run/systemd/system ]] || die 'Нужен сервер с systemd, а не контейнер или chroot'
     local identity distro release codename
     identity=$(os_identity)
     IFS=: read -r distro release codename <<< "$identity"
@@ -216,8 +216,8 @@ show_package_list() {
 prepare_system_packages() {
     step '00 / Проверка компонентов и обновлений системы'
     local package command_name
-    local -a required=(ca-certificates curl gnupg openssl python3 dnsutils iproute2 certbot ufw nftables openssh-server
-                      fail2ban unattended-upgrades kmod util-linux)
+    local -a required=(ca-certificates curl gnupg openssl python3 bind9-dnsutils iproute2 certbot ufw nftables openssh-server
+                      fail2ban python3-systemd unattended-upgrades kmod util-linux)
     local -a missing=()
     for package in "${required[@]}"; do
         package_installed "$package" || missing+=("$package")
@@ -281,6 +281,43 @@ early_preflight() {
     fi
     ! command -v nginx >/dev/null || die 'Обнаружен существующий nginx; требуется разобрать конфигурацию вручную'
     [[ ! -e /var/www/decoy ]] || die 'Каталог сайта-заглушки уже существует; автоматическая перезапись запрещена'
+}
+
+cleanup_stale_staging() {
+    local path owner mode
+    local -a stale=()
+    shopt -s nullglob
+    stale=("${BASE}.staging."*)
+    shopt -u nullglob
+    for path in "${stale[@]}"; do
+        [[ -d $path && ! -L $path && $path == "${BASE}.staging."* ]] || die "Найден подозрительный путь незавершённой установки: $path"
+        owner=$(stat -c '%u:%g' -- "$path")
+        mode=$(stat -c '%a' -- "$path")
+        [[ $owner == 0:0 && $mode == 700 ]] || die "Нельзя автоматически удалить непроверенный staging-каталог: $path"
+        rm -rf -- "$path"
+        warn "Удалён защищённый staging-каталог незавершённой установки: $path"
+    done
+}
+
+personalize_decoy() {
+    python3 -B - /var/www/decoy/index.html <<'PY'
+import secrets
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+text = path.read_text(encoding='utf-8')
+palettes = (
+    ('#d7ef9e', '#e9ffc0'),
+    ('#cbeaa0', '#e2f8bd'),
+    ('#dceba8', '#eff8ce'),
+    ('#c8e69b', '#e0f7b7'),
+)
+accent, hover = secrets.choice(palettes)
+text = text.replace('#d7ef9e', accent).replace('#e9ffc0', hover)
+text = text.replace('</head>', f'<!-- site-variant:{secrets.token_hex(16)} -->\n</head>', 1)
+path.write_text(text, encoding='utf-8')
+PY
 }
 
 collect() {
@@ -393,7 +430,9 @@ install_docker() {
         install -d -m 755 /etc/apt/keyrings
         curl --proto '=https' --tlsv1.2 -fSL --retry 3 --connect-timeout 15 --max-time 90 \
           "https://download.docker.com/linux/$distro/gpg" -o "$WORK/docker.asc"
-        gpg --batch --show-keys "$WORK/docker.asc" >/dev/null
+        local fingerprint
+        fingerprint=$(gpg --homedir "$WORK" --batch --with-colons --show-keys "$WORK/docker.asc" 2>/dev/null | awk -F: '$1=="fpr" {print $10; exit}')
+        [[ $fingerprint == 9DC858229FC7DD38854AE2D88D81803C0EBFCD88 ]] || die 'Отпечаток ключа официального репозитория Docker не совпал'
         cat > "$WORK/cheburnet-docker.sources" <<EOF
 Types: deb
 URIs: https://download.docker.com/linux/$distro
@@ -412,7 +451,7 @@ EOF
         [[ ! -f /etc/apt/sources.list.d/cheburnet-docker.sources ]] || cmp -s "$WORK/cheburnet-docker.sources" /etc/apt/sources.list.d/cheburnet-docker.sources || die 'Конфигурация собственного Docker APT отличается.'
         install -m 644 "$WORK/docker.asc" /etc/apt/keyrings/cheburnet-docker.asc
         install -m 644 "$WORK/cheburnet-docker.sources" /etc/apt/sources.list.d/cheburnet-docker.sources
-        apt-get -o DPkg::Lock::Timeout=600 update
+        apt_apply update
         apt_confirmed install --no-install-recommends docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
     fi
     docker compose version >/dev/null || die 'Установите Docker Compose v2.'
@@ -420,38 +459,29 @@ EOF
     docker info >/dev/null
     local security
     security=$(docker info --format '{{json .SecurityOptions}}')
-    [[ $security != *rootless* && $security != *userns* ]] || die 'Для прямого bind сертификатов и root:root сокетов нужен rootful Docker без userns-remap.'
+    [[ $security != *rootless* && $security != *userns* ]] || die 'Нужен Docker от root без userns-remap: сертификаты и сокеты монтируются напрямую.'
     [[ $security == *apparmor* && $security == *seccomp* ]] || die 'Для этой сборки Docker должен поддерживать включённые AppArmor и seccomp.'
     local other
     other=$(docker ps -a --format '{{.Names}} {{.Image}}' | awk '$1=="remnanode" || $1=="cheburnet-decoy" || $2 ~ /remnawave\/node/ {print $1}')
-    [[ -z $other ]] || die "На сервере уже есть контейнер ноды/decoy: $other. Автоудаление не выполняется."
+    [[ -z $other ]] || die "На сервере уже есть контейнер ноды или сайта-заглушки: $other. Автоудаление не выполняется."
 }
 
 prepare_stack() {
     step '04 / Образ ноды и два Unix-сокета'
     compose config -q
-    compose pull
-    local image digest
+    local image
     image=$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1],encoding="utf-8"))["services"]["remnanode"]["image"])' \
       "$BASE/docker-compose.yml")
-    digest=$(docker image inspect "$image" --format '{{index .RepoDigests 0}}') || \
-      die 'Не удалось получить digest загруженного образа ноды'
-    [[ $digest =~ ^[^[:space:]@]+@sha256:[[:xdigit:]]{64}$ ]] || \
-      die 'Загруженный образ ноды не содержит корректного SHA-256 digest'
-    python3 - "$BASE/docker-compose.yml" "$digest" <<'PY'
-import json,sys
-from pathlib import Path
-p=Path(sys.argv[1]);v=json.loads(p.read_text(encoding='utf-8'));digest=sys.argv[2]
-assert '@sha256:' in digest,'Image digest missing'
-v['services']['remnanode']['image']=digest
-p.write_text(json.dumps(v,indent=2)+'\n',encoding='utf-8')
-PY
+    [[ $image =~ ^remnawave/node:[^@[:space:]]+@sha256:[[:xdigit:]]{64}$ ]] || \
+      die 'В конфигурации ноды нет заранее проверенного дайджеста SHA-256'
+    compose pull
+    docker image inspect "$image" >/dev/null || die 'Не удалось проверить загруженный образ ноды'
     systemctl enable --now cheburnet-decoy.service
-    ok 'Образ закреплён по digest; служба сайта-заглушки запущена'
+    ok 'Образ закреплён по дайджесту; служба сайта-заглушки запущена'
 }
 
 apply_tuning() {
-    step '05 / Продвинутая настройка и защита сервера'
+    step '05 / Расширенная настройка и защита сервера'
     local port ips
     port=$(get_setting node_port); ips=$(get_setting panel_ips)
     # Порт тюнинга обязан совпадать с NODE_PORT.
@@ -462,12 +492,13 @@ apply_tuning() {
       CHEBURNET_INSTALL_SECURITY_PACKAGES=0 CHEBURNET_INSTALL_ZRAM_PACKAGES=0 \
       bash "$BASE/vendor/cheburnet-auto-tuning.sh" < /dev/null | tee "$BASE/tuning-report.log"
     # После тюнинга ограничения API проверяются повторно.
-    ufw status | awk '/^Status: active$/ {ok=1} END {exit !ok}' || die 'Продвинутая настройка не активировала UFW. Проверьте её отчёт'
+    ufw status | awk '/^Status: active$/ {ok=1} END {exit !ok}' || \
+      die 'Расширенная настройка не активировала UFW. Проверьте отчёт /opt/remnanode/tuning-report.log'
     ufw allow 443/tcp comment 'CheburNET Vision TLS' >/dev/null
     say '  Действующие правила межсетевого экрана после настройки'
     ufw status verbose
     python3 "$BASE/security_check.py" --firewall
-    ok 'Продвинутая настройка завершена; ограничения API подтверждены.'
+    ok 'Расширенная настройка завершена; ограничения API подтверждены.'
 }
 
 harden_host() {
@@ -557,7 +588,7 @@ issue_certificate() {
 verify_certificate_name() {
     local cert=$1 domain=$2 result
     result=$(openssl x509 -in "$cert" -checkhost "$domain" -noout) || die 'Не удалось прочитать сертификат'
-    [[ $result == "Hostname $domain does match certificate" ]] || die "Сертификат не выдан на домен $domain"
+    [[ $result == "Hostname $domain does match certificate" ]] || die "Сертификат выдан не на домен $domain"
 }
 
 traffic_control_report() {
@@ -776,7 +807,7 @@ bootstrap_project() {
     say '  Завершение сохранённой подготовки проекта'
     for name in decoy.html cheburnet-decoy.service cheburnet-acme-cleanup.service; do
         [[ -f $BASE/bootstrap/$name && ! -L $BASE/bootstrap/$name ]] || \
-          die "Не найден сохранённый файл подготовки: $name. Автопродолжение невозможно"
+          die "Не найден сохранённый файл подготовки: $name. Автоматическое продолжение невозможно"
     done
     # Секреты/код: root 0600/0700. Публичный сайт/nginx.conf: 0644.
     # Сокеты: root:root 0660, их каталог: 0755; родитель BASE остаётся 0700.
@@ -784,6 +815,7 @@ bootstrap_project() {
     # контейнер обращается через отдельный bind-mount каталога сокетов.
     install -d -m 755 /var/www/decoy "$BASE/fallback-sockets"
     install -m 644 "$BASE/bootstrap/decoy.html" /var/www/decoy/index.html
+    personalize_decoy
     # Каталог проекта уже опубликован с маркером продолжения; чужой nginx
     # отклонён до изменений. Маска не даёт пакету открыть стандартный TCP/80
     systemctl mask nginx.service
@@ -792,7 +824,7 @@ bootstrap_project() {
     systemctl mask nginx.service
     nginx_version=$(nginx -v 2>&1 | sed -n 's@.*nginx/\([0-9.]*\).*@\1@p')
     [[ $nginx_version =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || die 'Не удалось определить версию nginx'
-    python3 - "$BASE" "$nginx_version" <<'PY'
+    python3 -B - "$BASE" "$nginx_version" <<'PY'
 import json,sys
 from pathlib import Path
 base=Path(sys.argv[1]);sys.path.insert(0,str(base))
@@ -904,7 +936,8 @@ EOF
             ;;
         --install)
             [[ ! -e $BASE && ! -L $BASE ]] || \
-              die "Каталог $BASE уже существует. Для управляемой установки используйте --resume. Без маркера — ручной разбор; ничего не удаляйте вслепую"
+              die "Каталог $BASE уже существует. Для управляемой установки используйте --resume. Если это не незавершённая установка ЧебурNET, разберите каталог вручную"
+            cleanup_stale_staging
             early_preflight
             unpack
             prepare_system_packages
@@ -962,7 +995,7 @@ confirm_panel_ready() {
     ask_yes 'Нода установлена и стала зелёной в панели?'
 }
 
-# Private child entry
+# Внутренняя точка входа для дочернего процесса
 # Внутренняя проверка не захватывает блокировку родительского процесса повторно.
 if [[ ${1:-} == --check-internal ]]; then
     (( $# == 1 )) || die 'Внутренняя проверка не принимает дополнительные аргументы'

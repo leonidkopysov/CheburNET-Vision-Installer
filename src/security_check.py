@@ -28,6 +28,11 @@ def capture(*args):
     return p.stdout.strip()
 
 
+def state(*args):
+    """Return service state without turning an expected inactive state into an exception."""
+    return subprocess.run(args, capture_output=True, text=True, timeout=30).stdout.strip()
+
+
 def firewall(text, port, panel_ips, required_families=(4,)):
     need('Status: active' in text, 'UFW не активен.')
     need('deny (incoming)' in text and 'deny (routed)' in text, 'Неверная политика UFW.')
@@ -138,7 +143,7 @@ def check():
     need(re.search(r'^NoNewPrivs:\s+1$', status, re.M) and re.search(r'^Seccomp:\s+2$', status, re.M),
          'Не подтверждены NoNewPrivs/seccomp процесса контейнера.')
     image = capture('docker', 'inspect', '-f', '{{.Config.Image}}', 'remnanode')
-    need('@sha256:' in image, 'Образ ноды не закреплён по digest.')
+    need('@sha256:' in image, 'Образ ноды не закреплён по дайджесту.')
     mounts = json.loads(capture('docker','inspect','-f','{{json .Mounts}}','remnanode'))
     for destination in ('/etc/letsencrypt', '/run/xray-fallback', '/opt/cheburnet/profile.json'):
         need(any(m['Destination'] == destination and not m['RW'] for m in mounts), 'Неверный режим монтирования файлов ноды.')
@@ -166,8 +171,8 @@ def check():
     print('✓ Изоляция службы nginx включена; разрешён только AF_UNIX.')
     for unit in ('docker.service', 'cheburnet-decoy.service', 'certbot.timer', 'fail2ban.service',
                  'cheburnet-acme-expiry.timer'):
-        need(capture('systemctl', 'is-active', unit) == 'active', f'Не активна служба {unit}.')
-        need(capture('systemctl', 'is-enabled', unit) == 'enabled', f'Не включён автозапуск {unit}.')
+        need(state('systemctl', 'is-active', unit) == 'active', f'Не активна служба {unit}.')
+        need(state('systemctl', 'is-enabled', unit) == 'enabled', f'Не включён автозапуск {unit}.')
     capture('fail2ban-client', 'status', 'sshd')
     print('✓ Автозапуск служб, таймер сертификата и SSH-защита Fail2ban проверены.')
 

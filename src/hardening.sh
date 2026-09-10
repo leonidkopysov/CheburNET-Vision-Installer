@@ -1,25 +1,26 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
-export LC_ALL=C
+export LC_ALL=C.UTF-8
+export PYTHONUTF8=1
 BASE=/opt/remnanode
-[[ -f $BASE/.cheburnet-managed ]] || exit 1
-command -v sshd >/dev/null || { echo 'Ошибка: не найден sshd из пакета openssh-server.' >&2; exit 1; }
+[[ -f $BASE/.cheburnet-managed ]] || { echo '  ✗ ОШИБКА: не найден маркер управляемой установки ЧебурNET' >&2; exit 1; }
+command -v sshd >/dev/null || { echo '  ✗ ОШИБКА: не найден sshd из пакета openssh-server' >&2; exit 1; }
 SSH_MODE=''
 if systemctl is-active --quiet ssh.service; then
     SSH_MODE=service
 elif systemctl is-active --quiet ssh.socket; then
     SSH_MODE=socket
 else
-    echo 'Ошибка: не найдена активная служба ssh.service или ssh.socket.' >&2
+    echo '  ✗ ОШИБКА: не найдена активная служба ssh.service или ssh.socket' >&2
     exit 1
 fi
 install -d -m 700 "$BASE/backups"
-# Only these agreed connection limits are changed. Authentication and TCP
-# forwarding retain their effective configuration, including Match sections.
+# Изменяются только согласованные ограничения соединений. Аутентификация, TCP-forwarding
+# и блоки Match сохраняют свою действующую конфигурацию
 sshd -t
 sshd -T > "$BASE/backups/sshd-effective-before.txt"
 SSH_DROPIN=/etc/ssh/sshd_config.d/00-cheburnet-vision.conf
-[[ ! -L $SSH_DROPIN ]] || { echo 'Ошибка: SSH drop-in является ссылкой.' >&2; exit 1; }
+[[ ! -L $SSH_DROPIN ]] || { echo '  ✗ ОШИБКА: SSH drop-in является ссылкой' >&2; exit 1; }
 # Первоначальный снимок хранится отдельно от отката текущей попытки
 if [[ ! -e $BASE/backups/sshd-initial.saved ]]; then
     if [[ -f $SSH_DROPIN ]]; then
@@ -37,7 +38,7 @@ restore_ssh() {
     if [[ $HAD_DROPIN == 1 ]]; then
         cp -p "$BASE/backups/sshd-dropin-before.conf" "$SSH_DROPIN"
     else
-        # Keep a harmless empty owned file; do not delete any SSH configuration.
+        # Оставляем пустой управляемый файл и не удаляем чужую SSH-конфигурацию
         : > "$SSH_DROPIN"
     fi
     if [[ $SSH_MODE == service ]]; then
@@ -87,7 +88,7 @@ else
     fi
 fi
 echo '✓ SSH: ограничения применены; AllowTcpForwarding и способ входа сохранены.'
-# Do not rewrite the vendor tuner. Apply the agreed TFO setting separately.
+# Вендорный тюнинг не перезаписывается; согласованный TFO применяется отдельно
 TFO=/etc/sysctl.d/99-cheburnet-tcp-fastopen.conf
 [[ ! -L $TFO ]] || { echo 'Ошибка: файл TCP Fast Open является ссылкой.' >&2; exit 1; }
 if [[ -f $TFO && ! -f $BASE/backups/tcp-fastopen.conf ]]; then
