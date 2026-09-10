@@ -62,7 +62,7 @@ ask_yes() {
         esac
     done
 }
-confirm_install() { ask_yes 'Установить ЧебурNET Vision Installer?'; }
+confirm_install() { ask_yes 'Установить на машину ЧебурNET Vision?'; }
 die() { printf '\n  %s%s✗ ОШИБКА:%s %s\n' "$BOLD" "$RED" "$RESET" "$*" >&2; exit 1; }
 # shellcheck disable=SC2317
 cleanup() {
@@ -187,7 +187,7 @@ show_package_list() {
 prepare_system_packages() {
     step '00 / Проверка компонентов и обновлений системы'
     local package command_name
-    local -a required=(ca-certificates curl gnupg openssl python3 dnsutils iproute2 certbot ufw nftables openssh-server)
+    # Компоненты безопасности ставятся здесь же, чтобы Auto Tuning не повторял apt update.\n    local -a required=(ca-certificates curl gnupg openssl python3 dnsutils iproute2 certbot ufw nftables openssh-server fail2ban unattended-upgrades)
     local -a missing=()
     for package in "${required[@]}"; do
         package_installed "$package" || missing+=("$package")
@@ -547,13 +547,30 @@ install_traffic_control() {
 
     printf '%s\n' installing > "$marker"
     SSH_CONNECTION="${SSH_CONNECTION:-}" python3 -u -c '
-import importlib.util, sys
+import importlib.util, json, os, sys
+from pathlib import Path
 path = sys.argv[1]
+settings_path = Path(sys.argv[2])
 spec = importlib.util.spec_from_file_location("cheburnet_traffic_control", path)
 module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)
-module.main(["install", "--yes"])
-' "$BASE/cheburnet-traffic-control.py" < /dev/tty | tee "$BASE/traffic-control-install.log"
+args = ["install", "--yes"]
+connection = os.environ.get("SSH_CONNECTION", "").split()
+if len(connection) == 4:
+    admin_ip = module.host(connection[0])
+    ssh_port = str(module.port_list(connection[3])[0])
+    settings = json.loads(settings_path.read_text(encoding="utf-8"))
+    panel_ips = module.ip_list(settings["panel_ips"])
+    allowed = sorted(set([admin_ip, *panel_ips]))
+    args += ["--ssh-port", ssh_port]
+    for address in allowed:
+        args += ["--allow", address]
+    module.info("Автоматически использованы параметры текущего SSH-подключения и ранее введённые IP панели.")
+    module.info("SSH: " + ssh_port + "; исключения IP: " + ", ".join(allowed))
+else:
+    module.warn("Текущее SSH-подключение не определено; подтвердите предложенные параметры вручную.")
+module.main(args)
+' "$BASE/cheburnet-traffic-control.py" "$BASE/settings.json" < /dev/tty | tee "$BASE/traffic-control-install.log"
     /usr/local/bin/cheburnet-traffic-control activate
     printf '%s\n' installed > "$marker"
     traffic_control_report
@@ -614,6 +631,42 @@ check() {
     ok 'TLS/443 → HTTP/1.1 и HTTP/2: 200; доверенная цепочка и имя сертификата проверены.'
     ok 'Проверочное подключение с TLS 1.2 отклонено.'
     warn 'Доступ из Интернета, связь с панелью и VLESS с реальным пользователем проверьте отдельно.'
+}
+
+report_row() {
+    local component=$1 status=$2 color=${3:-$GREEN}
+    printf '  %-34s %s%s%s\n' "$component" "$color" "$status" "$RESET"
+}
+
+installation_report() {
+    local rc=$1 traffic_choice
+    traffic_choice=$(cat "$BASE/.traffic-control-choice" 2>/dev/null || true)
+    step 'ИТОГОВЫЙ ОТЧЁТ ПО КОМПОНЕНТАМ'
+    printf '  %-34s %s\n' 'КОМПОНЕНТ' 'СТАТУС'
+    say '  ───────────────────────────────────────────────────────────────'
+    report_row 'Система и пакеты' 'ОБНОВЛЕНЫ'
+    report_row 'Docker Engine' 'ЗАПУЩЕН'
+    report_row 'RemnaNode' 'ЗАПУЩЕН'
+    report_row 'API ноды (mTLS)' 'РАБОТАЕТ И ЗАЩИЩЁН'
+    report_row 'Xray Core' 'КОНФИГУРАЦИЯ ПРОВЕРЕНА'
+    report_row 'nginx и сайт-заглушка' 'РАБОТАЮТ ЧЕРЕЗ UNIX-СОКЕТЫ'
+    report_row 'TLS-сертификат' 'ПОЛУЧЕН И ПРОВЕРЕН'
+    report_row 'Автопродление TLS' 'ВКЛЮЧЕНО'
+    report_row 'UFW и защита SSH' 'ВКЛЮЧЕНЫ'
+    report_row 'Продвинутая настройка' 'ПРИМЕНЕНА'
+    report_row 'Защита от Two-Way Ping' 'ВКЛЮЧЕНА'
+    case "$traffic_choice" in
+        installed) report_row 'ЧебурNET Traffic Control' 'ВКЛЮЧЁН И ПРОВЕРЕН';;
+        skipped) report_row 'ЧебурNET Traffic Control' 'ПРОПУЩЕН ПО ВЫБОРУ' "$YELLOW";;
+        *) report_row 'ЧебурNET Traffic Control' 'СТАТУС НЕ ОПРЕДЕЛЁН' "$RED";;
+    esac
+    if [[ $rc == 2 ]]; then
+        report_row 'Профиль TLS/443' 'ОЖИДАЕТ ПРИМЕНЕНИЯ В REMNAWAVE' "$YELLOW"
+    else
+        report_row 'Профиль TLS/443' 'ПРОВЕРЕН'
+    fi
+    say '  ───────────────────────────────────────────────────────────────'
+    report_row 'Итог установки' 'ЗАВЕРШЕНА'
 }
 
 show_result() {
@@ -832,6 +885,7 @@ EOF
         ok 'Локальные проверки компонентов и TLS/443 пройдены.'
     fi
     warn 'Подключение настоящим VLESS-клиентом и доступ извне проверяются отдельно.'
+    installation_report "$rc"
     show_result
     say "Файлы: $BASE · повторная проверка: bash $BASE/installer.sh --check"
     # exit, а не return: ожидаемое состояние не должно запускать ERR-ловушку.

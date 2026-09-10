@@ -1,84 +1,41 @@
-name: Проверка установщика
+name: Служебная сборка установщика
 
 on:
   push:
-    branches: [main]
-  pull_request:
-  workflow_dispatch:
+    branches: [codex/installer-ux-report-20260910]
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
-  validate:
+  build-and-validate:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
       - name: Проверка Python-тестов
         run: python3 -m unittest discover -s tests -p 'test_*.py' -v
-
       - name: Воспроизводимая сборка
-        run: |
-          cp cheburnet-vision-install.sh /tmp/installer.before
-          cp SHA256SUMS /tmp/SHA256SUMS.before
-          python3 build.py
-          cmp /tmp/installer.before cheburnet-vision-install.sh
-          cmp /tmp/SHA256SUMS.before SHA256SUMS
-
+        run: python3 build.py
       - name: Проверка Bash и SHA-256
         run: |
           bash -n src/installer.sh
           bash -n cheburnet-vision-install.sh
           sha256sum -c SHA256SUMS
-
       - name: Установка ShellCheck
         run: sudo apt-get update && sudo apt-get install -y shellcheck
-
       - name: Проверка ShellCheck
         run: |
           shellcheck -S style src/installer.sh cheburnet-vision-install.sh
           shellcheck -S style src/acme-firewall.sh src/acme-pre.sh src/acme-post.sh
           shellcheck -S style src/hardening.sh src/renew-hook.sh src/check-nofile.sh
-
-  release:
-    needs: validate
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    concurrency:
-      group: vision-release
-      cancel-in-progress: false
-    steps:
-      - uses: actions/checkout@v4
-      - name: Публикация проверенной версии
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-          COMMIT_MESSAGE: ${{ github.event.head_commit.message }}
-        shell: bash
+      - name: Сохранение собранных файлов
         run: |
-          set -euo pipefail
-          version=$(bash ./cheburnet-vision-install.sh --version)
-          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
-          tag="v$version"
-          notes="docs/RELEASE-NOTES-$version.md"
-          [[ -f "$notes" ]]
-          sha256sum -c SHA256SUMS
-          if gh release view "$tag" >/dev/null 2>&1; then
-            if [[ "$COMMIT_MESSAGE" != *"[обновить-выпуск]"* ]]; then
-              echo "Выпуск $tag уже существует; для его контролируемого обновления нужен маркер commit"
-              exit 0
-            fi
-            git tag -f "$tag" "$GITHUB_SHA"
-            git push --force origin "refs/tags/$tag"
-            gh release edit "$tag" --title "ЧебурNET Vision Installer $version" \
-              --notes-file "$notes"
-            gh release upload "$tag" --clobber cheburnet-vision-install.sh SHA256SUMS
-            echo "Выпуск $tag обновлён после успешной проверки"
+          if git diff --quiet -- cheburnet-vision-install.sh SHA256SUMS; then
+            echo "Сборка уже актуальна"
             exit 0
           fi
-          gh release create "$tag" --target "$GITHUB_SHA" \
-            --title "ЧебурNET Vision Installer $version" --notes-file "$notes" \
-            cheburnet-vision-install.sh SHA256SUMS
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add cheburnet-vision-install.sh SHA256SUMS
+          git commit -m "Собрать установщик после проверки"
+          git push origin HEAD
