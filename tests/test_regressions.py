@@ -220,7 +220,20 @@ echo CONTINUED
         with tempfile.TemporaryDirectory() as td:
             base = Path(td)/'node'
             source = SOURCE.replace('readonly BASE=/opt/remnanode', f'readonly BASE={base}')
+            # Model root ownership without requiring the test runner to be root.
+            source += '''
+stat(){
+    if [[ $1 == -c && $2 == '%u:%g' ]]; then
+        printf '%s\\n' "${TEST_OWNER:-0:0}"
+    else
+        command stat "$@"
+    fi
+}
+'''
             safe = Path(str(base)+'.staging.safe'); safe.mkdir(mode=0o700)
+            p = subprocess.run(['bash', '-c', source + '\nTEST_OWNER=1000:1000\ncleanup_stale_staging'], capture_output=True, text=True)
+            self.assertEqual(p.returncode, 1)
+            self.assertTrue(safe.exists())
             p = subprocess.run(['bash', '-c', source + '\ncleanup_stale_staging'], capture_output=True, text=True)
             self.assertEqual(p.returncode, 0, p.stderr)
             self.assertFalse(safe.exists())
