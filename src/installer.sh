@@ -187,7 +187,8 @@ show_package_list() {
 prepare_system_packages() {
     step '00 / Проверка компонентов и обновлений системы'
     local package command_name
-    # Компоненты безопасности ставятся здесь же, чтобы Auto Tuning не повторял apt update.\n    local -a required=(ca-certificates curl gnupg openssl python3 dnsutils iproute2 certbot ufw nftables openssh-server fail2ban unattended-upgrades)
+    # Компоненты безопасности ставятся здесь же, чтобы Auto Tuning не повторял apt update.
+    local -a required=(ca-certificates curl gnupg openssl python3 dnsutils iproute2 certbot ufw nftables openssh-server fail2ban unattended-upgrades)
     local -a missing=()
     for package in "${required[@]}"; do
         package_installed "$package" || missing+=("$package")
