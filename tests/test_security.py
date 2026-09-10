@@ -39,7 +39,7 @@ class SecurityTests(unittest.TestCase):
 
     def test_release_version_and_component_order(self):
         installer = (ROOT/'src/installer.sh').read_text(encoding='utf-8')
-        self.assertIn('readonly CHEBURNET_VERSION=1.1.2', installer)
+        self.assertIn('readonly CHEBURNET_VERSION=1.1.3', installer)
         self.assertNotIn('experimental', installer.lower())
         self.assertNotIn('эксперимент', installer.lower())
         sequence = [
@@ -51,6 +51,20 @@ class SecurityTests(unittest.TestCase):
             installer.rindex("\n    step 'ИТОГИ УСТАНОВКИ / Проверка компонентов'"),
         ]
         self.assertEqual(sequence, sorted(sequence))
+
+    def test_two_way_ping_protection_is_installed_and_checked(self):
+        installer = (ROOT/'src/installer.sh').read_text(encoding='utf-8')
+        helper = (ROOT/'src/cheburnet-two-way-ping.sh').read_text(encoding='utf-8')
+        unit = (ROOT/'src/cheburnet-two-way-ping.service').read_text(encoding='utf-8')
+        for rule in ('icmp type echo-request', 'icmp type timestamp-request',
+                     'icmpv6 type echo-request'):
+            self.assertIn(rule, helper)
+        self.assertNotIn('echo-reply', helper)
+        self.assertIn('DefaultDependencies=no', unit)
+        self.assertIn('Before=network-pre.target', unit)
+        self.assertIn('ConditionFileIsExecutable=', unit)
+        self.assertIn('systemctl enable --now cheburnet-two-way-ping.service', installer)
+        self.assertGreaterEqual(installer.count('check_two_way_ping'), 3)
 
     def test_application_version_is_independent_from_os_release(self):
         installer = (ROOT/'src/installer.sh').read_text(encoding='utf-8')

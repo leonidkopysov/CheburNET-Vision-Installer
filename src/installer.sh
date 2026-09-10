@@ -11,7 +11,7 @@ set -Eeuo pipefail
 umask 077
 export LC_ALL=C.UTF-8
 export PYTHONUTF8=1
-readonly CHEBURNET_VERSION=1.1.2
+readonly CHEBURNET_VERSION=1.1.3
 # Фиксированный каталог используется службами systemd и хуками.
 readonly BASE=/opt/remnanode
 WORK=''
@@ -40,6 +40,7 @@ banner() {
     say "  ◆ Сертификат Let's Encrypt и автоматическое продление"
     say '  ◆ Продвинутая настройка ЧебурNET: сеть, ZRAM, защита сервера'
     say '  ◆ Ограничение API IP-адресами панели, защита служб и SSH'
+    say '  ◆ Защита от входящих ICMP echo и timestamp-запросов'
     say '  ◆ ЧебурNET Traffic Control — опционально: фильтрация по трём внешним спискам'
     say ''
     say '  По завершении: готовый профиль ноды и настройки хоста.'
@@ -409,7 +410,30 @@ apply_tuning() {
 harden_host() {
     step '06 / Усиление защиты SSH и сетевых настроек'
     bash "$BASE/hardening.sh"
+    install -m 700 "$BASE/cheburnet-two-way-ping.sh" /usr/local/sbin/cheburnet-two-way-ping.sh
+    install -m 644 "$BASE/cheburnet-two-way-ping.service" /etc/systemd/system/cheburnet-two-way-ping.service
+    systemctl daemon-reload
+    systemctl enable --now cheburnet-two-way-ping.service
+    check_two_way_ping
     ok 'Параметры SSH и системная защита применены и проверены.'
+}
+
+check_two_way_ping() {
+    local rules
+    [[ -x /usr/local/sbin/cheburnet-two-way-ping.sh ]] || \
+      die 'Не найден исполняемый файл защиты от Two-Way Ping'
+    systemctl is-enabled --quiet cheburnet-two-way-ping.service || \
+      die 'Автозапуск защиты от Two-Way Ping не включён'
+    systemctl is-active --quiet cheburnet-two-way-ping.service || \
+      die 'Служба защиты от Two-Way Ping не активна'
+    rules=$(nft list table inet cheburnet_privacy 2>/dev/null) || \
+      die 'Таблица защиты от Two-Way Ping не загружена'
+    [[ $rules == *'hook input'* &&
+       $rules == *'CheburNET: block ICMP echo'* &&
+       $rules == *'CheburNET: block ICMP timestamp'* &&
+       $rules == *'CheburNET: block ICMPv6 echo'* ]] || \
+      die 'Правила защиты от Two-Way Ping загружены не полностью'
+    ok 'Входящие ICMP echo и timestamp-запросы блокируются; остальные ICMP-сообщения разрешены.'
 }
 
 start_stack() {
@@ -564,6 +588,7 @@ check() {
     docker exec remnanode xray run -test -config /opt/cheburnet/profile.json
     systemctl is-active --quiet certbot.timer
     python3 "$BASE/security_check.py"
+    check_two_way_ping
     case "$(cat "$BASE/.traffic-control-choice" 2>/dev/null || true)" in
         installed)
             check_traffic_control
@@ -604,7 +629,8 @@ show_result() {
 publish_project() {
     local name
     local -a managed=(runtime.py renew-hook.sh acme-firewall.sh acme-pre.sh acme-post.sh
-        check-nofile.sh hardening.sh security_check.py cheburnet-traffic-control.py)
+        check-nofile.sh hardening.sh security_check.py cheburnet-traffic-control.py
+        cheburnet-two-way-ping.sh cheburnet-two-way-ping.service)
     [[ ! -e $BASE && ! -L $BASE ]] || die "Каталог $BASE уже существует; публикация отменена"
     # До атомарного переименования BASE не существует. Обычная ошибка удаляет
     # только этот временный каталог; SIGKILL оставляет безопасный staging-снимок.

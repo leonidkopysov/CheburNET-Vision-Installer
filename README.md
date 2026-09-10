@@ -6,7 +6,7 @@
 
 ### VLESS TLS Vision + Unix-Socket Decoy для Remnawave
 
-![Version](https://img.shields.io/badge/version-1.1.2-8b5cf6?style=for-the-badge)
+![Version](https://img.shields.io/badge/version-1.1.3-8b5cf6?style=for-the-badge)
 [![Validation](https://img.shields.io/github/actions/workflow/status/leonidkopysov/CheburNET-Vision-Installer/validate.yml?branch=main&style=for-the-badge&label=проверка)](https://github.com/leonidkopysov/CheburNET-Vision-Installer/actions/workflows/validate.yml)
 [![License](https://img.shields.io/badge/license-MIT-22c55e?style=for-the-badge)](LICENSE)
 ![TLS](https://img.shields.io/badge/TLS-1.3-06b6d4?style=for-the-badge)
@@ -31,6 +31,7 @@
 - ЧебурNET Auto Tuning `1.0.0`;
 - ЧебурNET Traffic Control `1.0.0` — по отдельному согласию;
 - UFW, Fail2ban, ZRAM, BBR/fq и системные защитные настройки;
+- защита от входящих IPv4/IPv6 echo-запросов и IPv4 timestamp-проб с автозапуском до сети;
 - готовый профиль ноды и параметры Host для Remnawave.
 
 <h3>Схема работы</h3>
@@ -50,7 +51,7 @@
 | 03 | План и установка Docker; атомарное сохранение проекта с менеджером и отметкой незавершённой подготовки; план nginx и установка служб |
 | 04 | Загрузка закреплённого образа RemnaNode и запуск nginx через два Unix-сокета |
 | 05 | Продвинутая настройка сервера и включение UFW до запуска API |
-| 06 | Усиление SSH с сохранением действующего способа входа и `AllowTcpForwarding` |
+| 06 | Усиление SSH с сохранением действующего способа входа и `AllowTcpForwarding`; включение защиты от входящих ping- и timestamp-проб |
 | 07 | Повторная строгая проверка UFW для обеих адресных семейств, запуск RemnaNode и ожидание TCP-listener API (mTLS проверяется при связи с панелью) |
 | 08 | Выпуск сертификата, проверка домена, dry-run продления и закрытие TCP/80 |
 | 09 | Предложение установить Traffic Control, применение списков и самодиагностика |
@@ -85,9 +86,9 @@ curl -fsSLO https://raw.githubusercontent.com/leonidkopysov/CheburNET-Vision-Ins
 sha256sum -c SHA256SUMS && bash ./cheburnet-vision-install.sh
 ```
 
-Одно разрешение в начале действует на обновление индексов APT, системных пакетов и установку необходимых компонентов, включая Docker и nginx, только в рамках текущего запуска. Каждый непустой план всё равно показывается с новыми, обновляемыми и удаляемыми пакетами и точными версиями, затем повторно проверяется перед применением. Изменившийся план пересчитывается, а план с удалениями останавливает установку для ручного разбора; фактический APT запускается с `--no-remove`. Phased updates Ubuntu не форсируются. Встроенный Auto Tuning использует это же разрешение при установке недостающих компонентов безопасности; его код в 1.1.2 не менялся.
+Одно разрешение в начале действует на обновление индексов APT, системных пакетов и установку необходимых компонентов, включая Docker и nginx, только в рамках текущего запуска. Каждый непустой план всё равно показывается с новыми, обновляемыми и удаляемыми пакетами и точными версиями, затем повторно проверяется перед применением. Изменившийся план пересчитывается, а план с удалениями останавливает установку для ручного разбора; фактический APT запускается с `--no-remove`. Phased updates Ubuntu не форсируются. Встроенный Auto Tuning использует это же разрешение при установке недостающих компонентов безопасности; его код в 1.1.3 не менялся.
 
-Версия установщика — `1.1.2`. История, прежние теги и релизы сохранены. Публикация тега `v1.1.2` и файлов релиза выполняется GitHub Actions только после успешных проверок. Статус публикации: [Actions](https://github.com/leonidkopysov/CheburNET-Vision-Installer/actions/workflows/validate.yml).
+Версия установщика — `1.1.3`. История, прежние теги и релизы сохранены. Публикация тега `v1.1.3` и файлов релиза выполняется GitHub Actions только после успешных проверок. Статус публикации: [Actions](https://github.com/leonidkopysov/CheburNET-Vision-Installer/actions/workflows/validate.yml).
 
 `main` изменяется со временем. Для воспроизводимой установки используйте файлы [конкретного выпуска](https://github.com/leonidkopysov/CheburNET-Vision-Installer/releases) или URL с полным SHA коммита. Сумма, скачанная рядом со скриптом, обнаруживает повреждение/рассинхронизацию, но не является независимой подписью. Короткий запуск через process substitution не проверяет SHA-256 самого установщика.
 
@@ -103,7 +104,7 @@ bash /opt/remnanode/installer.sh --check
 
 Сначала проект целиком записывается во временный каталог рядом с `/opt/remnanode`, синхронизируется с диском и атомарно переименовывается. Вместе с настройками сохраняются менеджер, исходные файлы bootstrap и отметка `.bootstrap-pending`. Установка nginx и служб выполняется после этого. При обычном сбое незавершённый временный каталог удаляется; после SIGKILL/отключения питания может остаться `remnanode.staging.*`, который не мешает новому запуску, но содержит закрытые настройки.
 
-Если `/opt/remnanode` уже создан этой версией, `--resume` повторяет незавершённую подготовку, затем оставшиеся этапы. Не удаляйте каталог ноды, сертификаты и firewall вслепую. Повреждённые или оставшиеся от старых версий установки без корректного маркера требуют ручного разбора. `--resume` не является обновлением 1.1.1 до 1.1.2 и не мигрирует между версиями. Публикация на GitHub сама по себе не меняет уже работающие серверы.
+Если `/opt/remnanode` уже создан этой версией, `--resume` повторяет незавершённую подготовку, затем оставшиеся этапы. Не удаляйте каталог ноды, сертификаты и firewall вслепую. Повреждённые или оставшиеся от старых версий установки без корректного маркера требуют ручного разбора. `--resume` не обновляет предыдущие версии до 1.1.3 и не мигрирует между версиями. Публикация на GitHub сама по себе не меняет уже работающие серверы.
 
 ## Изменения вне каталога ноды и ограничения отката
 
@@ -113,7 +114,7 @@ bash /opt/remnanode/installer.sh --check
 - `/var/www/decoy`, собственные `cheburnet-decoy.service` и `cheburnet-acme-cleanup.service`; штатная `nginx.service` останавливается и маскируется;
 - `/etc/letsencrypt` и собственные хуки `90-cheburnet-vision` в каталогах pre/post/deploy; `certbot.timer`;
 - drop-in SSH `/etc/ssh/sshd_config.d/00-cheburnet-vision.conf`, собственные sysctl-файлы и резервные копии;
-- настройки и службы Auto Tuning, UFW, Fail2ban, а при согласии — файлы и таблицу nftables Traffic Control;
+- настройки и службы Auto Tuning, UFW, Fail2ban, `/usr/local/sbin/cheburnet-two-way-ping.sh`, `cheburnet-two-way-ping.service`, таблицу `inet cheburnet_privacy`, а при согласии — файлы и таблицу nftables Traffic Control;
 - блокировку `/run/cheburnet-vision.lock`, временные каталоги подготовки и журналы.
 
 Полного автоматического отката APT, Docker, тюнинга и firewall нет. Обработчик завершения удаляет свои временные файлы и пытается закрыть собственный временный доступ ACME; состояние сервера после ошибки нужно проверить. Для удаления нужен отдельный план с учётом реально установленных компонентов — не используйте `rm -rf /opt/remnanode` как деинсталляцию.
@@ -156,6 +157,17 @@ Docker-ключ загружается с официального HTTPS-адр�
 /opt/remnanode/tuning-report.log
 /var/lib/cheburnet-tuning/post-reboot-last.txt
 ```
+
+## Защита от Two-Way Ping
+
+На этапе усиления сервера устанавливается отдельный ранний nftables-слой `inet cheburnet_privacy`. Он блокирует только входящие IPv4/IPv6 echo-request и IPv4 timestamp-request. Исходящий ping, ответы на исходящие запросы, ICMP-ошибки, Path MTU Discovery и служебные ICMPv6-сообщения не блокируются.
+
+```bash
+systemctl status cheburnet-two-way-ping.service
+/usr/local/sbin/cheburnet-two-way-ping.sh status
+```
+
+Служба восстанавливает правила при загрузке до `network-pre.target`. Остановить защиту до следующего запуска службы можно командой `systemctl stop cheburnet-two-way-ping.service`, вернуть — `systemctl start cheburnet-two-way-ping.service`.
 
 ## Traffic Control
 
