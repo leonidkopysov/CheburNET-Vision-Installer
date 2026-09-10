@@ -154,6 +154,48 @@ printf '|%s' "$(umask)"
             with patch.object(tc, 'prompt_input', return_value=answer):
                 self.assertEqual(tc.ask_yes('Вопрос'), expected)
 
+    def test_panel_no_skips_final_diagnostics(self):
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)/'node'; base.mkdir(); (base/'.cheburnet-managed').write_text('1.1.4\n')
+            source = SOURCE.replace('readonly BASE=/opt/remnanode', f'readonly BASE={base}').replace(
+                '/run/cheburnet-vision.lock', str(Path(td)/'lock'))
+            stubs = '''
+require_server(){ :; }; check_ssh_collision(){ :; }; get_setting(){ echo 2222; }
+python3(){ :; }; prepare_tuning_dependencies(){ :; }; bootstrap_project(){ :; }
+prepare_stack(){ :; }; apply_tuning(){ :; }; harden_host(){ :; }; start_stack(){ :; }
+issue_certificate(){ :; }; install_traffic_control(){ :; }; show_result(){ echo PROFILE; }
+confirm_panel_ready(){ echo QUESTION; return 1; }; bash(){ echo DIAGNOSTICS; }
+main --resume
+'''
+            p = subprocess.run(['bash', '-c', source+stubs], capture_output=True, text=True)
+            self.assertEqual(p.returncode, 2, p.stderr)
+            self.assertLess(p.stdout.index('PROFILE'), p.stdout.index('QUESTION'))
+            self.assertNotIn('DIAGNOSTICS', p.stdout)
+            self.assertNotIn('ОШИБКА', p.stderr)
+
+    def test_clean_tc_cancellation_can_be_retried(self):
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)/'node'; base.mkdir()
+            marker = base/'.traffic-control-choice'; marker.write_text('installing\n')
+            source = SOURCE.replace('readonly BASE=/opt/remnanode', f'readonly BASE={base}').replace(
+                '/usr/local/bin/', td+'/bin/').replace('/var/lib/cheburnet-traffic-control/', td+'/data/').replace(
+                '/etc/systemd/system/', td+'/units/')
+            stubs = '\nnft(){ [[ $* == "list tables" ]]; }; ask_yes(){ return 1; }; install_traffic_control\n'
+            p = subprocess.run(['bash', '-c', source+stubs], capture_output=True, text=True)
+            self.assertEqual(p.returncode, 0, p.stderr)
+            self.assertEqual(marker.read_text().strip(), 'skipped')
+
+    def test_failed_acme_cleanup_keeps_retry_marker(self):
+        with tempfile.TemporaryDirectory() as td:
+            marker = Path(td)/'marker'; marker.write_text('1')
+            source = (ROOT/'src/acme-firewall.sh').read_text().replace(
+                '/run/cheburnet-vision-acme.active', str(marker)).replace(
+                '/run/cheburnet-traffic-control.lock', td+'/lock')
+            p = subprocess.run(['bash', '-c', 'ufw(){ return 1; };\n'+source, 'test', 'close'],
+                               capture_output=True, text=True)
+            self.assertNotEqual(p.returncode, 0)
+            self.assertTrue(marker.exists())
+
     def test_prompt_color_and_no_color(self):
         with patch.object(runtime.sys.stdin, 'isatty', return_value=True), patch.dict(os.environ, {}, clear=True):
             self.assertIn('\033[1;33m', runtime.prompt_label('Порт: '))

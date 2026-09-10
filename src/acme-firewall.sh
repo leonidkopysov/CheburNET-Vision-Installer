@@ -39,6 +39,8 @@ close_acme() {
     # При ошибке удаления отметка остаётся для следующей попытки таймера
     rm -f -- "$ACME_MARKER"
 }
+# Вызывается косвенно через EXIT-ловушку
+# shellcheck disable=SC2317
 cleanup_failed_open() {
     local rc=$?
     if (( rc != 0 )); then close_acme || true; fi

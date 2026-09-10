@@ -80,6 +80,8 @@ cleanup() {
 trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
+# Вызывается косвенно через ERR-ловушку
+# shellcheck disable=SC2317
 report_error() {
     local rc=$1 line=$2
     if (( rc == 130 || rc == 143 )); then
