@@ -47,7 +47,7 @@ class SecurityTests(unittest.TestCase):
         self.assertIn("step 'ИТОГОВЫЙ ОТЧЁТ ПО КОМПОНЕНТАМ'", installer)
         self.assertIn("installation_report \"$rc\"", installer)
         self.assertIn("column_width - ${#component}", installer)
-        self.assertIn("'$BOLD' '$YELLOW' \"$1\"", installer)
+        self.assertIn('"$BOLD" "$YELLOW" "$1"', installer)
         for component in ('Docker Engine', 'RemnaNode', 'API ноды (mTLS)', 'Xray Core',
                           'nginx и сайт-заглушка', 'TLS-сертификат',
                           'ЧебурNET Traffic Control', 'Профиль TLS/443'):
