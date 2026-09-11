@@ -14,7 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]/'src'))
 import runtime as r
 
 SETTINGS = dict(domain='node.example.com', panel_ips='203.0.113.10',
-                email='operator@example.com', panel_version='3.4.3')
+                email='operator@example.com')
 
 
 class ConfigTests(unittest.TestCase):
@@ -43,10 +43,10 @@ class ConfigTests(unittest.TestCase):
             '203.0.113.10 2001:db8::1')
         self.assertEqual(r.validate(dict(SETTINGS, panel_ips='203.0.113.10 203.0.113.10'))['panel_ips'], '203.0.113.10')
 
-    def test_versions(self):
+    def test_legacy_panel_version_is_ignored(self):
         for version in ['2.8.1', '3.2.2', '4.0.0', 'latest', '3.4.3;id']:
-            with self.subTest(version=version), self.assertRaises(ValueError):
-                r.validate(dict(SETTINGS, panel_version=version))
+            with self.subTest(version=version):
+                self.assertEqual(r.validate(dict(SETTINGS, panel_version=version)), r.validate(SETTINGS))
 
     def test_yes_no(self):
         for text in ['y', 'Y', 'YES', 'yes', 'Да', 'д']:
@@ -90,7 +90,7 @@ class ConfigTests(unittest.TestCase):
     def test_collect_retries_only_invalid_field_and_secret(self):
         # No actual credential is used here; cryptographic validation is tested separately.
         answers=['https://wrong.ru','node.example.com','x','2222','203.0.113.10',
-                 '3.4.3','operator@example.com','Д']
+                 'operator@example.com','Д']
         with patch('builtins.input',side_effect=answers) as inp, \
              patch.object(r.getpass,'getpass',side_effect=['bad','valid']) as gp, \
              patch.object(r,'validate_key',side_effect=[ValueError('bad key'),'valid']), \
@@ -98,6 +98,7 @@ class ConfigTests(unittest.TestCase):
              contextlib.redirect_stdout(io.StringIO()),contextlib.redirect_stderr(io.StringIO()):
             r.collect('/unused')
         self.assertEqual(inp.call_count,len(answers))
+        self.assertTrue(all('Версия панели' not in call.args[0] for call in inp.call_args_list))
         self.assertEqual(gp.call_count,2)
         settings,out,secret=render.call_args.args
         self.assertEqual(settings['domain'],'node.example.com')
