@@ -9,7 +9,7 @@ import tarfile
 
 ROOT = Path(__file__).resolve().parent
 TUNING_SHA256 = '52ca38230b9bc4fde4eff818be87e72d978c191d5ea12c099ff904f3a35acc39'
-TRAFFIC_CONTROL_SHA256 = '7bb39726a72643bf7cad65ed9d8297944391fac943f7e12a9efacfd9d5963f4a'
+TRAFFIC_CONTROL_SHA256 = '1726074533b2ef24f4be6b1039564575cbf2df304c077c51c16fe8ceb2654320'
 
 
 def build():

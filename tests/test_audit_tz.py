@@ -144,6 +144,20 @@ class AuditTZTests(unittest.TestCase):
                 exec(compile(guard, '<CLI guard>', 'exec'), namespace)
             self.assertEqual(caught.exception.code, expected)
 
+    def test_nft109_ct_state_array_from_server(self):
+        # Actual Ubuntu 24.04/nft 1.0.9 expression from the user's chain dump.
+        for values, op, valid in [(['established', 'related'], 'in', True),
+                                   (['related', 'established'], 'in', True),
+                                   (['established'], 'in', False),
+                                   (['established', 'related', 'new'], 'in', False),
+                                   (['established', 'related'], '!=', False)]:
+            data = nft_fixture()
+            match = data['nftables'][7]['rule']['expr'][0]['match']
+            self.assertEqual(match['left'], {'ct': {'key': 'state'}})
+            match.update(right=values, op=op)
+            with patch.object(tc, 'run', return_value=types.SimpleNamespace(stdout=json.dumps(data))):
+                self.assertEqual(tc.live_rules_match(state()), valid, (values, op))
+
     def test_tc_json_command_has_no_dependency_prefix(self):
         lock = io.StringIO()
         with patch.object(tc.os, 'geteuid', return_value=0), patch('builtins.open', return_value=lock), \
