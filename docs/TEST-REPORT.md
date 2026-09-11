@@ -2,7 +2,7 @@
 
 Основа: main `219a52620bfde13f7fd06ec7f8f9831867f69e8e`. Полный разбор и ограничения: [AUDIT-2026-09-11.md](AUDIT-2026-09-11.md).
 
-- 80 тестов unittest, включая новые регрессии TC exit-кода/JSON/правил, ACME, ZRAM, NOFILE, SSH TERM, повторного запуска и фактического отчёта.
+- 81 тест unittest, включая новые регрессии TC exit-кода/JSON/правил, ACME, ZRAM, NOFILE, SSH TERM, прав файлов, повторного запуска и фактического отчёта.
 - ShellCheck 0.11.0 `-S style`: все shell-файлы src, vendor Auto Tuning и полный установщик, без замечаний.
 - `bash -n`, Python compile, воспроизводимая сборка, сверка SHA-256 и содержимого payload.
 - Колонки проверены при ширине 12/24/32/40/80/120, с ANSI, кириллицей, wide/combining Unicode.

@@ -4619,23 +4619,38 @@ fi
 # Права только на собственные файлы ЧебурNET
 # ------------------------------------------------------------
 mkdir -p /etc/cheburnet-tuning "$STATE_DIR" "$SNAPSHOT_DIR" "$BACKUP_DIR"
-chmod 0700 /etc/cheburnet-tuning "$STATE_DIR" "$SNAPSHOT_DIR" "$BACKUP_DIR" 2>/dev/null || true
-[[ -f $RESERVED_BASELINE_FILE ]] && chmod 0600 "$RESERVED_BASELINE_FILE" || true
-[[ -f $UDP_PORTS_FILE ]] && chmod 0600 "$UDP_PORTS_FILE" || true
-[[ -f ${PANEL_IP_FILE:-/nonexistent} ]] && chmod 0600 "$PANEL_IP_FILE" || true
-[[ -f $ZRAM_SETUP ]] && chmod 0755 "$ZRAM_SETUP" || true
-[[ -f $RPS_SETUP ]] && chmod 0755 "$RPS_SETUP" || true
-[[ -f ${POST_REBOOT_SCRIPT:-/nonexistent} ]] && chmod 0755 "$POST_REBOOT_SCRIPT" || true
-[[ -f ${POST_REBOOT_MARKER:-/nonexistent} ]] && chmod 0600 "$POST_REBOOT_MARKER" || true
-[[ -f ${POST_REBOOT_LOG:-/nonexistent} ]] && chmod 0600 "$POST_REBOOT_LOG" || true
-[[ -f ${CERT_DRYRUN_STAMP:-/nonexistent} ]] && chmod 0600 "$CERT_DRYRUN_STAMP" || true
-[[ -f ${CERT_DRYRUN_LOG:-/nonexistent} ]] && chmod 0600 "$CERT_DRYRUN_LOG" || true
-[[ -f ${CERT_FIREWALL_HELPER:-/nonexistent} ]] && chmod 0755 "$CERT_FIREWALL_HELPER" || true
+PERMISSIONS_OK=1
+normalize_owned_mode() {
+    local mode=$1 path=${2:-}
+    [[ -n $path && ( -e $path || -L $path ) ]] || return 0
+    if [[ -L $path || ! -f $path ]] || ! chmod "$mode" "$path"; then
+        PERMISSIONS_OK=0
+    fi
+}
+chmod 0700 /etc/cheburnet-tuning "$STATE_DIR" "$SNAPSHOT_DIR" "$BACKUP_DIR" 2>/dev/null || PERMISSIONS_OK=0
+normalize_owned_mode 0600 "$RESERVED_BASELINE_FILE"
+normalize_owned_mode 0600 "$UDP_PORTS_FILE"
+normalize_owned_mode 0600 "${PANEL_IP_FILE:-}"
+normalize_owned_mode 0755 "$ZRAM_SETUP"
+normalize_owned_mode 0755 "$RPS_SETUP"
+normalize_owned_mode 0755 "${POST_REBOOT_SCRIPT:-}"
+normalize_owned_mode 0600 "${POST_REBOOT_MARKER:-}"
+normalize_owned_mode 0600 "${POST_REBOOT_LOG:-}"
+normalize_owned_mode 0600 "${CERT_DRYRUN_STAMP:-}"
+normalize_owned_mode 0600 "${CERT_DRYRUN_LOG:-}"
+normalize_owned_mode 0755 "${CERT_FIREWALL_HELPER:-}"
 if [[ -n $CHOWN_BIN ]]; then
-    "$CHOWN_BIN" -R root:root /etc/cheburnet-tuning "$STATE_DIR" >/dev/null 2>&1 || true
+    "$CHOWN_BIN" -R root:root /etc/cheburnet-tuning "$STATE_DIR" >/dev/null 2>&1 || PERMISSIONS_OK=0
+else
+    PERMISSIONS_OK=0
 fi
-SECURITY_FILES_STATUS="права собственных файлов нормализованы"
-ok "Права на собственные конфигурации/снимки ЧебурNET нормализованы"
+if (( PERMISSIONS_OK )); then
+    SECURITY_FILES_STATUS="права собственных файлов нормализованы"
+    ok "Права на собственные конфигурации/снимки ЧебурNET нормализованы"
+else
+    SECURITY_FILES_STATUS="не удалось нормализовать права всех собственных файлов"
+    warn "$SECURITY_FILES_STATUS"
+fi
 
 # ============================================================
 # Финальная проверка всех компонентов

@@ -59,6 +59,21 @@ def nft_fixture():
 
 
 class AuditTZTests(unittest.TestCase):
+    def test_owned_permission_failure_and_symlink_are_not_success(self):
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / 'owned'
+            path.touch()
+            link = Path(td) / 'link'
+            link.symlink_to(path)
+            for name, result, expected in [(path, 0, '1'), (path, 9, '0'), (link, 0, '0')]:
+                code = 'set -euo pipefail\nPERMISSIONS_OK=1\n' + function('normalize_owned_mode')
+                code += '\nchmod(){ return "$2"; }\n'
+                code = code.replace('return "$2"', f'return {result}')
+                code += '\nnormalize_owned_mode 0600 "$1"\nprintf "%s" "$PERMISSIONS_OK"'
+                p = subprocess.run(['bash', '-c', code, 'test', str(name)], capture_output=True, text=True)
+                self.assertEqual(p.returncode, 0, p.stderr)
+                self.assertEqual(p.stdout, expected)
+
     def test_platform_gate_matrix(self):
         from test_shell import SOURCE
         fn = re.search(r'^require_server\(\) \{\n.*?^\}', SOURCE, re.M | re.S)[0]
