@@ -217,6 +217,61 @@ show_package_list() {
     printf '    • %s\n' "$@"
 }
 
+cleanup_system_packages() {
+    local simulation plan verified package option pattern
+    local -a packages=()
+    # До проверки загрузки нового ядра сохраняем ВСЕ ядра и загрузчик.
+    # Не меняем apt-mark и постоянные настройки APT.
+    local -a protection=(
+        -o 'APT::NeverAutoRemove::=^linux-.*'
+        -o 'APT::NeverAutoRemove::=^(grub|shim|initramfs|dracut|intel-microcode|amd64-microcode).*'
+        -o 'APT::NeverAutoRemove::=^(apt|dpkg|systemd|udev|openssh|ufw|nftables|iptables|fail2ban|docker|containerd|nginx|cloud-init|netplan|network-manager|ifupdown|iproute2|python3|ca-certificates|curl|gnupg|openssl|dnsutils|certbot|unattended-upgrades)([-:]|$)'
+    )
+    step 'Очистка ненужных зависимостей и устаревшего кэша APT'
+    simulation=$(apt-get -s "${protection[@]}" autoremove 2>&1) || {
+        warn 'Не удалось рассчитать очистку APT; удаление пропущено.'
+        return 0
+    }
+    plan=$(awk '$1=="Inst" || $1=="Remv" || $1=="Conf"' <<< "$simulation")
+    if [[ -n $plan ]]; then
+        if grep -Eq '^(Inst|Conf) ' <<< "$plan"; then
+            warn 'Очистка требует других изменений пакетов; удаление пропущено.'
+            return 0
+        fi
+        mapfile -t packages < <(awk '$1=="Remv" {print $2}' <<< "$plan")
+        for package in "${packages[@]}"; do
+            for option in "${protection[@]}"; do
+                [[ $option == APT::NeverAutoRemove::* ]] || continue
+                pattern=${option#*=}
+                if [[ $package =~ $pattern ]]; then
+                    warn "APT предложил удалить защищённый пакет $package; очистка пропущена."
+                    return 0
+                fi
+            done
+        done
+        show_package_list 'APT предлагает удалить ненужные зависимости:' "${packages[@]}"
+        say '  Ядра и загрузчик сохраняются. Конфигурационные файлы не очищаются.'
+        if ask_yes 'Удалить перечисленные ненужные зависимости?'; then
+            verified=$(apt-get -s "${protection[@]}" autoremove 2>&1) || {
+                warn 'Повторная проверка очистки не прошла; удаление пропущено.'
+                return 0
+            }
+            verified=$(awk '$1=="Inst" || $1=="Remv" || $1=="Conf"' <<< "$verified")
+            if [[ $verified != "$plan" ]]; then
+                warn 'Список удаления изменился; очистка пропущена, чтобы не удалять неподтверждённые пакеты.'
+                return 0
+            fi
+            apt-get -o DPkg::Lock::Timeout=600 "${protection[@]}" -y autoremove
+        else
+            skip 'Удаление зависимостей отменено.'
+        fi
+    else
+        ok 'Ненужных зависимостей для удаления нет.'
+    fi
+    apt-get -o DPkg::Lock::Timeout=600 autoclean
+    ok 'Устаревшие архивы пакетов очищены; установленные ядра сохранены.'
+}
+
 prepare_system_packages() {
     step '00 / Проверка компонентов и обновлений системы'
     local package command_name
@@ -246,7 +301,10 @@ prepare_system_packages() {
         apt_confirmed install --no-install-recommends "${missing[@]}"
     fi
     # Новый план рассчитывается после установки зависимостей, а не до неё.
-    apt_confirmed full-upgrade
+    # Обычное обновление с новыми зависимостями, в том числе пакетами ядра.
+    # Пакеты, которым требуется удаление/конфликтная замена, остаются удержанными.
+    apt_confirmed --with-new-pkgs upgrade
+    cleanup_system_packages
     for package in "${required[@]}"; do
         package_installed "$package" || die "Обязательный пакет $package не установлен."
     done

@@ -38,7 +38,9 @@ prepare_system_packages
 ''',{'APT_LOG':str(log)})
             self.assertEqual(result.returncode,0,result.stderr)
             self.assertIn('DPkg::Lock::Timeout=600 update',log.read_text())
-            self.assertIn('-s -o Dpkg::Options::=--force-confold full-upgrade',log.read_text())
+            self.assertIn('-s -o Dpkg::Options::=--force-confold --with-new-pkgs upgrade',log.read_text())
+            self.assertIn('autoremove',log.read_text())
+            self.assertIn('autoclean',log.read_text())
             self.assertIn('Проверка компонентов и обновлений завершена',result.stdout)
 
     def test_package_simulation_failure_is_not_reported_as_no_updates(self):
