@@ -12,7 +12,7 @@ import subprocess
 import sys
 import tempfile
 
-NODE_IMAGE = 'remnawave/node:3.4.1'
+NODE_IMAGE = 'remnawave/node:latest'
 # Fixed installation layout, not an operator-configurable path.
 BASE = '/opt/remnanode'
 TAG = 'Vision-TLS'
