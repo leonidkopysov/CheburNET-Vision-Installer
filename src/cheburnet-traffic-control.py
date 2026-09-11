@@ -667,6 +667,11 @@ def live_rules_match(state):
             for e in row:
                 if "match" in e:
                     m = e["match"]
+                    # nft 1.0.9: ct state membership is a bare JSON array.
+                    # Only normalize this known expression, not concatenations.
+                    if (m.get("left") == {"ct": {"key": "state"}} and
+                            m.get("op") == "in" and isinstance(m.get("right"), list)):
+                        m["right"] = {"set": m["right"]}
                     if m["op"] in ("==", "in"):
                         m["op"] = "in"
                     if isinstance(m["right"], dict) and "set" in m["right"]:
