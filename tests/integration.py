@@ -60,7 +60,7 @@ def main():
             '-keyout',str(d/'key.pem'),'-out',str(d/'cert.pem'),'-subj','/CN=node.example.com',
             '-addext','subjectAltName=DNS:node.example.com')
         s=runtime.validate(dict(domain='node.example.com',panel_ips='203.0.113.10',
-                                email='operator@example.com',panel_version='3.4.3',nginx_version='1.28.0'))
+                                email='operator@example.com',nginx_version='1.28.0'))
         p=runtime.profile(s)
         server_port,client_port,backend_port=port(),port(),port()
         inbound=p['inbounds'][0];inbound['port']=server_port;inbound['listen']='127.0.0.1'

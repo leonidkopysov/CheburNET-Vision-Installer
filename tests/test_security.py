@@ -118,7 +118,7 @@ class SecurityTests(unittest.TestCase):
             with self.assertRaises(sec.CheckFailure): sec.firewall(text,2222,'203.0.113.10')
 
     def test_cancel_after_collection_does_not_render_or_print_secret(self):
-        answers=['node.example.com','','203.0.113.10','3.4.3','a@example.com','','','']
+        answers=['node.example.com','','203.0.113.10','a@example.com','','','']
         output=io.StringIO()
         with patch('builtins.input',side_effect=answers), \
              patch.object(runtime.getpass,'getpass',return_value='SECRET_TEST_ONLY'), \

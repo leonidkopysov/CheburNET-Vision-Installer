@@ -12,7 +12,7 @@ import subprocess
 import sys
 import tempfile
 
-NODE_IMAGE = 'remnawave/node:3.4.1'
+NODE_IMAGE = 'remnawave/node:latest'
 # Fixed installation layout, not an operator-configurable path.
 BASE = '/opt/remnanode'
 TAG = 'Vision-TLS'
@@ -63,27 +63,19 @@ def validate(settings):
     s['panel_ips'] = ' '.join(dict.fromkeys(str(ipaddress.ip_address(x)) for x in ips))
     if not re.fullmatch(r'[^\s@]+@[^\s@]+\.[^\s@]+', s['email']):
         raise ValueError('Нужен рабочий email для уведомлений о сертификате.')
-    version = s['panel_version']
-    if not re.fullmatch(r'\d+\.\d+\.\d+', version):
-        raise ValueError('Версия панели: например 3.4.3.')
-    if tuple(map(int, version.split('.'))) < (3, 3, 0):
-        raise ValueError('Эта сборка рассчитана на панель Remnawave 3.3.0+.')
+    s.pop('panel_version', None)  # Совместимость с ранее сохранёнными настройками.
     nginx_version(s.get('nginx_version', '1.24.0'))
-    # This field is a compatibility gate for SNI verification, not an image selector.
-    if int(version.split('.')[0]) != 3:
-        raise ValueError('Для новой мажорной версии панели нужна отдельная проверка совместимости.')
     return s
 
 
 def collect(target):
     # Validate each field independently; ask for the secret only after all others are valid.
     s = dict(domain='node.example.com', node_port=2222, panel_ips='203.0.113.10',
-             panel_version='3.4.3', email='operator@example.com')
+             email='operator@example.com')
     print('Обозначения: Д — да · Н — нет. Enter принимает значение в скобках.')
     fields = [('domain', 'Домен ноды (без https://)', None),
               ('node_port', 'Порт API ноды, такой же в панели', '2222'),
               ('panel_ips', 'IP исходящих подключений панели (через пробел)', None),
-              ('panel_version', 'Версия панели 3.x (3.3.0+; проверка совместимости SNI)', None),
               ('email', "Email для сертификата Let's Encrypt", None)]
     for field, label, default in fields:
         while True:
@@ -94,7 +86,7 @@ def collect(target):
                 break
             except ValueError as e:
                 print(f'Ошибка: {e} Повторите только это поле.', file=sys.stderr)
-    print(f'Образ: {NODE_IMAGE}; версия панели {s["panel_version"]} прошла проверку требований SNI.')
+    print(f'Образ ноды: {NODE_IMAGE}.')
     while True:
         secret = getpass.getpass(confirmation_prompt('Секретный ключ ноды из панели (ввод скрыт): '))
         try:
