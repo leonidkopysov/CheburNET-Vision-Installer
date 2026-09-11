@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 from test_shell import SOURCE, shell
@@ -84,10 +85,13 @@ probe_http 'HTTP/2' http://localhost/
                 capture_output=True, text=True, timeout=3,
                 env={**os.environ, 'PROMPT_FILE': str(prompt), 'ANSWER_FILE': str(answer)})
             self.assertEqual(p.returncode, 0, p.stderr)
-            self.assertIn('BOLDYELLOWПроверка [Д/Y · Н/N]: RESET', prompt.read_text())
+            self.assertIn('BOLDYELLOWПроверка [Д/Н; Enter — Н]: RESET', prompt.read_text())
 
     def test_report_statuses_start_in_one_column(self):
-        p = shell("GREEN=''; RESET=''; report_row 'Система и пакеты' ГОТОВО; report_row 'Docker Engine' ГОТОВО; report_row 'ЧебурNET Traffic Control' ГОТОВО")
+        p = subprocess.run([sys.executable, '-c', "import terminal_ui as ui; "
+                            "[ui.row(name, 'ГОТОВО') for name in ['Система и пакеты', 'Docker Engine', 'ЧебурNET Traffic Control']]"],
+                           capture_output=True, text=True,
+                           env={**os.environ, 'PYTHONPATH': str(ROOT/'src'), 'COLUMNS': '80'})
         self.assertEqual(p.returncode, 0, p.stderr)
         positions = {line.index('ГОТОВО') for line in p.stdout.splitlines()}
         self.assertEqual(positions, {36})
@@ -236,6 +240,8 @@ echo CONTINUED
     def test_resume_preserves_pending_exit_code(self):
         with tempfile.TemporaryDirectory() as td:
             base = Path(td)/'node'; base.mkdir(); (base/'.cheburnet-managed').write_text('1.1.3\n')
+            (base/'terminal_ui.py').touch()
+            (base/'component_report.py').touch()
             source = SOURCE.replace('readonly BASE=/opt/remnanode', f'readonly BASE={base}').replace('/run/cheburnet-vision.lock', str(Path(td)/'lock'))
             for code in ('0', '2', '1'):
                 p = subprocess.run(['bash', '-c', source + '''

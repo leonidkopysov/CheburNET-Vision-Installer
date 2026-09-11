@@ -21,26 +21,54 @@ sshd -T > "$BASE/backups/sshd-effective-before.txt"
 SSH_DROPIN=/etc/ssh/sshd_config.d/00-cheburnet-vision.conf
 [[ ! -L $SSH_DROPIN ]] || { echo 'Ошибка: SSH drop-in является ссылкой.' >&2; exit 1; }
 HAD_DROPIN=0
+SSH_PENDING=0
+SSH_TMP=''
 if [[ -f $SSH_DROPIN ]]; then
     cp -p "$SSH_DROPIN" "$BASE/backups/sshd-dropin-before.conf"
     HAD_DROPIN=1
 fi
 restore_ssh() {
+    local restore_tmp
+    SSH_PENDING=0
+    restore_tmp=$(mktemp /etc/ssh/sshd_config.d/.cheburnet-restore-XXXXXX) || return 1
     if [[ $HAD_DROPIN == 1 ]]; then
-        cp -p "$BASE/backups/sshd-dropin-before.conf" "$SSH_DROPIN"
+        cp -p "$BASE/backups/sshd-dropin-before.conf" "$restore_tmp" || {
+            rm -f -- "$restore_tmp"
+            echo 'Ошибка: не удалось восстановить SSH drop-in из резервной копии.' >&2
+            return 1
+        }
     else
         # Keep a harmless empty owned file; do not delete any SSH configuration.
-        : > "$SSH_DROPIN"
+        chmod 644 "$restore_tmp" || return 1
     fi
+    if ! mv -f -- "$restore_tmp" "$SSH_DROPIN"; then
+        rm -f -- "$restore_tmp"
+        return 1
+    fi
+    sshd -t || return 1
     if [[ $SSH_MODE == service ]]; then
-        systemctl try-reload-or-restart ssh.service >/dev/null 2>&1 || true
+        systemctl try-reload-or-restart ssh.service >/dev/null 2>&1 || {
+            echo 'Ошибка: файл SSH восстановлен, но служба не перечитала настройки.' >&2
+            return 1
+        }
     else
-        systemctl daemon-reload >/dev/null 2>&1 || true
+        systemctl daemon-reload >/dev/null 2>&1 || return 1
     fi
     echo 'Ошибка применения SSH: предыдущая конфигурация восстановлена.' >&2
 }
+# shellcheck disable=SC2317,SC2329
+cleanup_ssh() {
+    local rc=$?
+    if [[ $SSH_PENDING == 1 ]]; then restore_ssh || rc=1; fi
+    [[ -z $SSH_TMP ]] || rm -f -- "$SSH_TMP"
+    exit "$rc"
+}
+trap cleanup_ssh EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 install -d -m 755 /etc/ssh/sshd_config.d
-cat > "$SSH_DROPIN" <<'CONF'
+SSH_TMP=$(mktemp /etc/ssh/sshd_config.d/.cheburnet-XXXXXX)
+cat > "$SSH_TMP" <<'CONF'
 # ЧебурNET Vision: ограничения SSH; AllowTcpForwarding не изменяется.
 MaxAuthTries 3
 LoginGraceTime 30
@@ -49,7 +77,10 @@ PermitTunnel no
 X11Forwarding no
 GatewayPorts no
 CONF
-chmod 644 "$SSH_DROPIN"
+chmod 644 "$SSH_TMP"
+SSH_PENDING=1
+mv -f -- "$SSH_TMP" "$SSH_DROPIN"
+SSH_TMP=''
 if ! sshd -t; then restore_ssh; exit 1; fi
 sshd -T > "$BASE/backups/sshd-effective-after.txt"
 if ! python3 - "$BASE/backups" <<'PY'
@@ -78,6 +109,7 @@ else
         exit 1
     fi
 fi
+SSH_PENDING=0
 echo '✓ SSH: ограничения применены; AllowTcpForwarding и способ входа сохранены.'
 # Do not rewrite the vendor tuner. Apply the agreed TFO setting separately.
 TFO=/etc/sysctl.d/99-cheburnet-tcp-fastopen.conf

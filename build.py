@@ -8,8 +8,8 @@ from pathlib import Path
 import tarfile
 
 ROOT = Path(__file__).resolve().parent
-TUNING_SHA256 = '49ed28d5f4939b652cd71f40145a49963a6462e3931e8e6d695e55baa8167b1b'
-TRAFFIC_CONTROL_SHA256 = '3e7d97c6fc028d78d9f0093496bad1bc20a45069b52a61e5fa886730a9b1d0aa'
+TUNING_SHA256 = 'e8e4016e092edc828d2042d0cf4b99ff2c4cdcece641466edf486e5fb04631ca'
+TRAFFIC_CONTROL_SHA256 = '7bb39726a72643bf7cad65ed9d8297944391fac943f7e12a9efacfd9d5963f4a'
 
 
 def build():

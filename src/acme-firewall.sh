@@ -3,24 +3,42 @@ set -Eeuo pipefail
 export LC_ALL=C
 # Only rules with this exact owned comment are removed. Never reset the firewall.
 readonly OWN_COMMENT=CheburNET-Vision-ACME-temporary
+readonly LEASE=/run/cheburnet-vision-acme-open
+# Та же блокировка, что у Traffic Control; держится только на время изменения.
+umask 077
+exec 9>/run/cheburnet-traffic-control.lock
+flock -w 360 9
 remove_own_rules() {
-    local n
+    local n rules numbers
+    rules=$(ufw status numbered) || return 1
+    numbers=$(awk -v comment="$OWN_COMMENT" '
+      $0 ~ ("# " comment "[[:space:]]*$") {
+        if(match($0,/\[[ ]*[0-9]+\]/)) {
+          n=substr($0,RSTART,RLENGTH);gsub(/[^0-9]/,"",n);print n
+        }
+      }' <<< "$rules" | sort -rn) || return 1
     while IFS= read -r n; do
         [[ $n =~ ^[0-9]+$ ]] || continue
         ufw --force delete "$n" >/dev/null
-    done < <(ufw status numbered | awk -v comment="$OWN_COMMENT" \
-      'index($0,comment) {if(match($0,/\[[ ]*[0-9]+\]/)){n=substr($0,RSTART,RLENGTH);gsub(/[^0-9]/,"",n); print n}}' | sort -rn)
+    done <<< "$numbers"
+}
+traffic_control_present() {
+    local tables
+    tables=$(nft list tables) || return 2
+    grep -Fxq 'table inet cheburnet_tc' <<< "$tables"
 }
 remove_own_traffic_control_rules() {
-    local handle
-    nft list chain inet cheburnet_tc ingress >/dev/null 2>&1 || return 0
+    local handle rules handles rc=0
+    traffic_control_present || rc=$?
+    [[ $rc != 1 ]] || return 0
+    [[ $rc == 0 ]] || return 1
+    rules=$(nft -a list chain inet cheburnet_tc ingress) || return 1
+    handles=$(awk -v comment="$OWN_COMMENT" \
+      'index($0,"comment \"" comment "\"") {for(i=1;i<=NF;i++) if($i=="handle") print $(i+1)}' <<< "$rules") || return 1
     while IFS= read -r handle; do
         [[ $handle =~ ^[0-9]+$ ]] || continue
         nft delete rule inet cheburnet_tc ingress handle "$handle"
-    done < <(
-        nft -a list chain inet cheburnet_tc ingress | awk -v comment="$OWN_COMMENT" \
-          'index($0,"comment \"" comment "\"") {for(i=1;i<=NF;i++) if($i=="handle") print $(i+1)}'
-    )
+    done <<< "$handles"
 }
 case "${1:-}" in
     open)
@@ -29,7 +47,12 @@ case "${1:-}" in
         remove_own_traffic_control_rules
         # Traffic Control runs before UFW. Its temporary return lets the ACME
         # validator reach the UFW rule without weakening any other port.
-        if nft list chain inet cheburnet_tc ingress >/dev/null 2>&1; then
+        rc=0
+        traffic_control_present || rc=$?
+        [[ $rc != 2 ]] || exit 1
+        [[ ! -L $LEASE ]] || exit 1
+        date +%s > "$LEASE"
+        if [[ $rc == 0 ]]; then
             nft insert rule inet cheburnet_tc ingress tcp dport 80 counter return comment "$OWN_COMMENT"
         fi
         ufw insert 1 allow 80/tcp comment "$OWN_COMMENT" >/dev/null
@@ -37,6 +60,7 @@ case "${1:-}" in
     close)
         remove_own_rules
         remove_own_traffic_control_rules
+        rm -f -- "$LEASE"
         ;;
-    *) exit 2;;
+    *) printf 'Использование: acme-firewall.sh {open|close}\n' >&2; exit 2;;
 esac
