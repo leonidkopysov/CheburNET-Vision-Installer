@@ -37,9 +37,7 @@ jobs:
 
       - name: Проверка ShellCheck
         run: |
-          shellcheck -S style src/installer.sh cheburnet-vision-install.sh
-          shellcheck -S style src/acme-firewall.sh src/acme-pre.sh src/acme-post.sh
-          shellcheck -S style src/hardening.sh src/renew-hook.sh src/check-nofile.sh
+          shellcheck -S style src/*.sh vendor/cheburnet-auto-tuning.sh cheburnet-vision-install.sh
 
   release:
     needs: validate

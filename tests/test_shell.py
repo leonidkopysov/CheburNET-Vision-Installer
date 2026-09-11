@@ -110,6 +110,7 @@ check_ssh_collision 2222
             counter=Path(td)/'counter';counter.write_text('0')
             result=shell('''
 get_setting(){ echo 2222; }
+timeout(){ shift; "$@"; }
 docker(){
   n=$(<"$COUNTER"); n=$((n+1)); printf '%s' "$n" > "$COUNTER"
   (( n >= 3 )) || return 1
@@ -151,6 +152,7 @@ certbot(){
     renew) echo dryrun >> "$EVENT_LOG"; if [[ $FAIL_RENEW == 2 ]]; then kill -TERM $$; fi; [[ $FAIL_RENEW == 0 ]] || return 9;;
   esac
 }
+timeout(){ [[ $1 != --foreground ]] || shift; shift; "$@"; }
 issue_certificate
 '''
             for fail,expected in [('0',['open','certonly','close','open','dryrun','close']),

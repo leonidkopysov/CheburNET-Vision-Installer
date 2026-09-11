@@ -15,7 +15,7 @@
 # сохраняют собственные лицензии и авторские права.
 # ==============================================================================
 set -Eeuo pipefail
-export LC_ALL=C
+export LC_ALL=C.UTF-8
 
 # ============================================================
 # ЧебурNET — адаптивная оптимизация сети v1.0.0
@@ -49,7 +49,7 @@ SKIPPED=0
 # Цвета используются только в интерактивном терминале.
 # NO_COLOR=1 отключает ANSI-цвета для журналов/автоматизации.
 # ------------------------------------------------------------
-if [[ -t 1 && -z ${NO_COLOR:-} && ${TERM:-dumb} != dumb ]]; then
+if [[ -t 1 && ! ${NO_COLOR+x} && ${TERM:-dumb} != dumb ]]; then
     C_RESET=$'\033[0m'
     C_BOLD=$'\033[1m'
     C_DIM=$'\033[2m'
@@ -104,26 +104,26 @@ ok() {
 }
 
 choice_hint_yes_no() {
-    printf '%s  Д — да   ·   Н — нет%s\n' "$C_DIM" "$C_RESET"
+    printf '%s%s  Д — да   ·   Н — нет (Enter)%s\n' "$C_BOLD" "$C_YELLOW" "$C_RESET"
 }
 
 choice_hint_yes_no_skip() {
-    printf '%s  Д — да   ·   Н — нет   ·   П — пропустить%s\n' "$C_DIM" "$C_RESET"
+    printf '%s%s  Д — да   ·   Н — нет   ·   П — пропустить (Enter)%s\n' "$C_BOLD" "$C_YELLOW" "$C_RESET"
 }
 
 choice_hint_skip() {
-    printf '%s  П — пропустить этот этап%s\n' "$C_DIM" "$C_RESET"
+    printf '%s%s  П — пропустить этот этап%s\n' "$C_BOLD" "$C_YELLOW" "$C_RESET"
 }
 
 prompt_yes_no() {
     local text=$1 answer
     [[ -t 0 ]] || return 1
-    printf '\n%s%s◆ %s%s\n' "$C_BOLD" "$C_CYAN" "$text" "$C_RESET"
+    printf '\n%s%s[?] %s%s\n' "$C_BOLD" "$C_YELLOW" "$text" "$C_RESET"
     choice_hint_yes_no
     while true; do
-        printf '%sВаш выбор [Д/Н]: %s' "$C_BOLD" "$C_RESET"
+        printf '%s%sВаш выбор [Д/Н; Enter — Н]: %s' "$C_BOLD" "$C_YELLOW" "$C_RESET"
         IFS= read -r answer || return 1
-        case "$answer" in
+        case "${answer,,}" in
             д|Д|да|ДА|Да|y|Y|yes|YES|Yes) return 0 ;;
             н|Н|нет|НЕТ|Нет|n|N|no|NO|No|'') return 1 ;;
             *) printf '%sВведите Д — да или Н — нет.%s\n' "$C_YELLOW" "$C_RESET" ;;
@@ -134,12 +134,12 @@ prompt_yes_no() {
 prompt_choice_yes_no_skip() {
     local text=$1 answer
     [[ -t 0 ]] || return 3
-    printf '\n%s%s◆ %s%s\n' "$C_BOLD" "$C_CYAN" "$text" "$C_RESET"
+    printf '\n%s%s[?] %s%s\n' "$C_BOLD" "$C_YELLOW" "$text" "$C_RESET"
     choice_hint_yes_no_skip
     while true; do
-        printf '%sВаш выбор [Д/Н/П]: %s' "$C_BOLD" "$C_RESET"
+        printf '%s%sВаш выбор [Д/Н/П; Enter — П]: %s' "$C_BOLD" "$C_YELLOW" "$C_RESET"
         IFS= read -r answer || return 3
-        case "$answer" in
+        case "${answer,,}" in
             д|Д|да|ДА|Да|y|Y|yes|YES|Yes) return 0 ;;
             н|Н|нет|НЕТ|Нет|n|N|no|NO|No) return 1 ;;
             п|П|пропустить|ПРОПУСТИТЬ|Пропустить|s|S|skip|SKIP|Skip|'') return 2 ;;
@@ -233,7 +233,6 @@ FSTRIM_BIN=$(command -v fstrim || true)
 FINDMNT_BIN=$(command -v findmnt || true)
 LSBLK_BIN=$(command -v lsblk || true)
 DF_BIN=$(command -v df || true)
-CURL_BIN=$(command -v curl || true)
 CERTBOT_BIN=$(command -v certbot || true)
 OPENSSL_BIN=$(command -v openssl || true)
 CRONTAB_BIN=$(command -v crontab || true)
@@ -428,6 +427,9 @@ NR_OPEN=$CUR_NR_OPEN
 if (( CUR_NR_OPEN < NR_OPEN_TARGET )); then
     NR_OPEN=$NR_OPEN_TARGET
     MANAGE_NR_OPEN=1
+elif [[ -f $CONF ]] && grep -Eq '^fs\.nr_open[[:space:]]*=' "$CONF"; then
+    # Повторный запуск сохраняет уже принадлежащее нам автоприменение.
+    MANAGE_NR_OPEN=1
 fi
 
 CUR_FILE_MAX=$(num_or_zero "$(sysctl -n fs.file-max 2>/dev/null || echo 0)")
@@ -438,6 +440,8 @@ MANAGE_FILE_MAX=0
 FILE_MAX=$CUR_FILE_MAX
 if (( CUR_FILE_MAX < FILE_MAX_TARGET )); then
     FILE_MAX=$FILE_MAX_TARGET
+    MANAGE_FILE_MAX=1
+elif [[ -f $CONF ]] && grep -Eq '^fs\.file-max[[:space:]]*=' "$CONF"; then
     MANAGE_FILE_MAX=1
 fi
 
@@ -1316,7 +1320,7 @@ fi
 # Ограничение истории резервных копий и снимков
 # ============================================================
 
-mapfile -t OLD_SNAPS < <(find "$SNAPSHOT_DIR" -maxdepth 1 -type f -name 'pre-v5.9.*-*' -printf '%T@ %p\n' 2>/dev/null | sort -nr | awk 'NR>10 {print $2}')
+mapfile -t OLD_SNAPS < <(find "$SNAPSHOT_DIR" -maxdepth 1 -type f -name 'pre-v1.0.0-*' -printf '%T@ %p\n' 2>/dev/null | sort -nr | awk 'NR>10 {print $2}')
 if ((${#OLD_SNAPS[@]})); then rm -f "${OLD_SNAPS[@]}"; fi
 
 mapfile -t OLD_BACKUPS < <(find "$BACKUP_DIR" -maxdepth 1 -type f -printf '%T@ %p\n' 2>/dev/null | sort -nr | awk 'NR>15 {print $2}')
@@ -1468,7 +1472,11 @@ if (( CONNTRACK_SUPPORTED )); then
     ACTUAL_BUCKETS=$(num_or_zero "$(sysctl -n net.netfilter.nf_conntrack_buckets 2>/dev/null || echo 0)")
     CT_COUNT=$(num_or_zero "$(sysctl -n net.netfilter.nf_conntrack_count 2>/dev/null || echo 0)")
 
-    (( ACTUAL_CT >= CT_BASE )) && ok "conntrack_max=${ACTUAL_CT}" || warn "conntrack_max=${ACTUAL_CT} ниже адаптивной базы ${CT_BASE}"
+    if (( ACTUAL_CT >= CT_BASE )); then
+        ok "conntrack_max=${ACTUAL_CT}"
+    else
+        warn "conntrack_max=${ACTUAL_CT} ниже адаптивной базы ${CT_BASE}"
+    fi
     echo "Conntrack buckets: текущие=${ACTUAL_BUCKETS}, цель=${CT_BUCKETS}, активные=${CT_COUNT}"
 
     if (( ACTUAL_BUCKETS >= CT_BUCKETS )); then
@@ -1535,7 +1543,6 @@ info "tcp_mem/udp_mem оставлены на авторасчёте ядра; o
 
 section "ZRAM И БЕЗОПАСНЫЕ VM-НАСТРОЙКИ"
 
-ZRAM_CHANGED=0
 ZRAM_REPAIRED=0
 ZRAM_MANAGED_BY_CHEBURNET=0
 ZRAM_STATUS="не проверен"
@@ -1852,11 +1859,12 @@ fi
 
 current=\$(cat "\$SYS/disksize" 2>/dev/null || echo 0)
 if [[ \$current =~ ^[0-9]+$ ]] && (( current > 0 )); then
-    # Устройство инициализировано, но swap не активен. Это типичное "сломанное"
-    # состояние после неудачного старта/перезагрузки. Безопасно сбрасываем его,
-    # поскольку выше подтверждено, что оно нигде не смонтировано и не в swapon.
-    [[ -w \$SYS/reset ]] || exit 3
-    echo 1 >"\$SYS/reset"
+    # Отсутствие mount/swap не доказывает, что чужое блочное устройство пусто.
+    # Уже инициализированный ZRAM не сбрасываем и не форматируем: пытаемся
+    # включить существующий swap, а при другой сигнатуре оставляем данные.
+    "\$SWAPON_BIN" --priority 100 "\$DEV"
+    [[ -n \$(active_zram) ]] || exit 4
+    exit 0
 fi
 
 if [[ -w \$SYS/comp_algorithm ]]; then
@@ -1894,12 +1902,12 @@ EOF
 
     "$SYSTEMCTL_BIN" daemon-reload
     "$SYSTEMCTL_BIN" reset-failed cheburnet-zram.service >/dev/null 2>&1 || true
-    if "$SYSTEMCTL_BIN" enable --now cheburnet-zram.service >/dev/null 2>&1 \
-       || "$SYSTEMCTL_BIN" restart cheburnet-zram.service >/dev/null 2>&1; then
+    # enable --now не перезапускает active (exited), даже если swap уже пропал.
+    if "$SYSTEMCTL_BIN" enable cheburnet-zram.service >/dev/null 2>&1 \
+       && "$SYSTEMCTL_BIN" restart cheburnet-zram.service >/dev/null 2>&1; then
         sleep 1
         ZRAM_ACTIVE_DEV=$(get_active_zram)
         if [[ -n $ZRAM_ACTIVE_DEV ]]; then
-            ZRAM_CHANGED=1
             ZRAM_MANAGED_BY_CHEBURNET=1
             ZRAM_STATUS="ЧебурNET ${ZRAM_SIZE_MB} MB (${ZRAM_ACTIVE_DEV})"
             ok "ZRAM создан/восстановлен: ${ZRAM_ACTIVE_DEV}, ${ZRAM_SIZE_MB} MB, priority=100"
@@ -2067,6 +2075,7 @@ rps_value_nonzero() {
 
 RPS_EXISTING=0
 RXQ_COUNT=0
+RXQS=()
 if [[ -n $PRIMARY_IF && -d /sys/class/net/$PRIMARY_IF/queues ]]; then
     shopt -s nullglob
     RXQS=("/sys/class/net/$PRIMARY_IF/queues/rx-"*)
@@ -2225,15 +2234,18 @@ nofile_pair_ok() {
     soft=${pair%%/*}
     hard=${pair##*/}
 
-    if [[ $soft == unlimited || $hard == unlimited || $soft == infinity || $hard == infinity ]]; then
-        return 0
-    fi
-
-    [[ $soft =~ ^[0-9]+$ && $hard =~ ^[0-9]+$ ]] || return 1
-    (( soft >= NOFILE_TARGET && hard >= NOFILE_TARGET ))
+    local limit
+    for limit in "$soft" "$hard"; do
+        [[ $limit == unlimited || $limit == infinity ]] && continue
+        [[ $limit =~ ^[0-9]+$ ]] || return 1
+        (( limit >= NOFILE_TARGET )) || return 1
+    done
+    return 0
 }
 
 get_remnanode_nofile() {
+    # Подстановки выполняются внутри контейнера, не на хосте.
+    # shellcheck disable=SC2016
     if [[ -n $TIMEOUT_BIN ]]; then
         "$TIMEOUT_BIN" 5 "$DOCKER_BIN" exec remnanode sh -c \
             'printf "%s/%s" "$(ulimit -Sn 2>/dev/null)" "$(ulimit -Hn 2>/dev/null)"' \
@@ -2673,6 +2685,8 @@ APT_CACHE_UPDATED=0
 package_installed() {
     local pkg=$1
     [[ -n $DPKG_QUERY_BIN ]] || return 1
+    # Шаблон раскрывается dpkg-query, а не Bash.
+    # shellcheck disable=SC2016
     "$DPKG_QUERY_BIN" -W -f='${Status}' "$pkg" 2>/dev/null | grep -q '^install ok installed$'
 }
 
@@ -2717,6 +2731,10 @@ ensure_package() {
 get_sshd_ports() {
     local -a ports=()
     local p
+    # Сохраняем порт текущего сеанса при socket activation и нестандартном SSH.
+    if [[ ${SSH_CONNECTION:-} =~ [[:space:]]([0-9]+)$ ]]; then
+        ports+=("${BASH_REMATCH[1]}")
+    fi
 
     if [[ -n $SSHD_BIN ]]; then
         while IFS= read -r p; do
@@ -2889,7 +2907,7 @@ if [[ $SECURITY_ENABLED == 1 ]]; then
     fi
 
     if package_installed unattended-upgrades; then
-        if grep -RqsE '^[[:space:]]*APT::Periodic::Unattended-Upgrade[[:space:]]+"1"' /etc/apt/apt.conf.d 2>/dev/null; then
+        if apt-config dump | grep -E '^APT::Periodic::Unattended-Upgrade[[:space:]]+"1"' >/dev/null; then
             UPDATES_STATUS="уже включены"
             ok "Автоматические обновления безопасности уже включены; существующая конфигурация не изменяется"
             if grep -RqsE '^[[:space:]]*Unattended-Upgrade::Automatic-Reboot[[:space:]]+"true"' /etc/apt/apt.conf.d 2>/dev/null; then
@@ -3184,8 +3202,8 @@ prompt_panel_ips_required() {
 
     choice_hint_skip
     while true; do
-        printf '%sВведите IP/CIDR панели (несколько — через запятую): %s' "$C_BOLD" "$C_RESET"
-        IFS= read -r raw || raw=""
+        printf '%s%sВведите IP/CIDR панели (несколько — через запятую): %s' "$C_BOLD" "$C_YELLOW" "$C_RESET"
+        IFS= read -r raw || { PANEL_SETUP_SKIPPED=1; return 2; }
         case "$raw" in
             п|П|пропустить|ПРОПУСТИТЬ|Пропустить|s|S|skip|SKIP|Skip)
                 PANEL_SETUP_SKIPPED=1
@@ -3219,11 +3237,11 @@ prompt_manual_panel_port() {
     choice_hint_skip
     while true; do
         if [[ -n $suggestion ]]; then
-            printf '%sВведите порт панели [%s]: %s' "$C_BOLD" "$suggestion" "$C_RESET"
+            printf '%s%sВведите порт панели [%s]: %s' "$C_BOLD" "$C_YELLOW" "$suggestion" "$C_RESET"
         else
-            printf '%sВведите порт панели (1-65535): %s' "$C_BOLD" "$C_RESET"
+            printf '%s%sВведите порт панели (1-65535): %s' "$C_BOLD" "$C_YELLOW" "$C_RESET"
         fi
-        IFS= read -r raw || raw=""
+        IFS= read -r raw || { PANEL_SETUP_SKIPPED=1; return 2; }
         case "$raw" in
             п|П|пропустить|ПРОПУСТИТЬ|Пропустить|s|S|skip|SKIP|Skip)
                 PANEL_SETUP_SKIPPED=1
@@ -3350,8 +3368,9 @@ resolve_panel_identity() {
                 save_panel_identity
                 ok "Порт и IP панели подтверждены: ${PANEL_PORT}/tcp"
                 return 0
+            else
+                return $?
             fi
-            return $?
         else
             rc=$?
             if (( rc == 2 || rc == 3 )); then
@@ -3502,9 +3521,20 @@ add_ufw_extra_ports() {
         elif [[ $token =~ ^([0-9]+)/(tcp|udp)$ ]]; then port=${BASH_REMATCH[1]}; proto=${BASH_REMATCH[2]}; fi
         [[ $port =~ ^[0-9]+$ ]] || continue
         (( port>=1 && port<=65535 )) || continue
-        "$UFW_BIN" allow "${port}/${proto}" >/dev/null 2>&1 || true
+        "$UFW_BIN" allow "${port}/${proto}" >/dev/null 2>&1 || return 1
     done
     return 0
+}
+
+# Ошибка сохранения доступа — основание остановиться ДО включения UFW.
+protect_ssh_before_ufw() {
+    local ssh_port
+    for ssh_port in "${SSH_PORTS[@]}"; do
+        if ! "$UFW_BIN" allow "${ssh_port}/tcp" >/dev/null 2>&1; then
+            printf 'ОШИБКА: не удалось разрешить SSH TCP/%s. UFW не включается.\n' "$ssh_port" >&2
+            return 1
+        fi
+    done
 }
 
 configure_panel_ufw_rule() {
@@ -3748,7 +3778,8 @@ if [[ $SECURITY_ENABLED == 1 ]]; then
 
             if (( UFW_ACTIVE )); then
                 FIREWALL_STATUS="UFW активен"
-                for ssh_port in "${SSH_PORTS[@]}"; do "$UFW_BIN" allow "${ssh_port}/tcp" >/dev/null 2>&1 || true; done
+                protect_ssh_before_ufw
+                add_ufw_extra_ports
                 if (( PANEL_NEEDED && PANEL_UFW_ALLOWED )); then
                     if configure_panel_ufw_rule; then
                         ok "UFW: API панели ${PANEL_PORT}/tcp ограничен подтверждёнными IP панели"
@@ -3766,9 +3797,9 @@ if [[ $SECURITY_ENABLED == 1 ]]; then
 
                 if (( WANT_ENABLE )); then
                     info "Перед включением UFW сохраняются фактически открытые сейчас сервисные порты; жёсткого списка портов ЧебурNET нет."
-                    "$UFW_BIN" default deny incoming >/dev/null 2>&1 || true
-                    "$UFW_BIN" default allow outgoing >/dev/null 2>&1 || true
-                    for ssh_port in "${SSH_PORTS[@]}"; do "$UFW_BIN" allow "${ssh_port}/tcp" >/dev/null 2>&1 || true; done
+                    protect_ssh_before_ufw
+                    "$UFW_BIN" default deny incoming >/dev/null 2>&1
+                    "$UFW_BIN" default allow outgoing >/dev/null 2>&1
                     while IFS= read -r tcp_port; do
                         [[ -n $tcp_port ]] || continue
                         [[ -n ${PANEL_PORT:-} && $tcp_port == "$PANEL_PORT" ]] && continue
@@ -4588,23 +4619,38 @@ fi
 # Права только на собственные файлы ЧебурNET
 # ------------------------------------------------------------
 mkdir -p /etc/cheburnet-tuning "$STATE_DIR" "$SNAPSHOT_DIR" "$BACKUP_DIR"
-chmod 0700 /etc/cheburnet-tuning "$STATE_DIR" "$SNAPSHOT_DIR" "$BACKUP_DIR" 2>/dev/null || true
-[[ -f $RESERVED_BASELINE_FILE ]] && chmod 0600 "$RESERVED_BASELINE_FILE" || true
-[[ -f $UDP_PORTS_FILE ]] && chmod 0600 "$UDP_PORTS_FILE" || true
-[[ -f ${PANEL_IP_FILE:-/nonexistent} ]] && chmod 0600 "$PANEL_IP_FILE" || true
-[[ -f $ZRAM_SETUP ]] && chmod 0755 "$ZRAM_SETUP" || true
-[[ -f $RPS_SETUP ]] && chmod 0755 "$RPS_SETUP" || true
-[[ -f ${POST_REBOOT_SCRIPT:-/nonexistent} ]] && chmod 0755 "$POST_REBOOT_SCRIPT" || true
-[[ -f ${POST_REBOOT_MARKER:-/nonexistent} ]] && chmod 0600 "$POST_REBOOT_MARKER" || true
-[[ -f ${POST_REBOOT_LOG:-/nonexistent} ]] && chmod 0600 "$POST_REBOOT_LOG" || true
-[[ -f ${CERT_DRYRUN_STAMP:-/nonexistent} ]] && chmod 0600 "$CERT_DRYRUN_STAMP" || true
-[[ -f ${CERT_DRYRUN_LOG:-/nonexistent} ]] && chmod 0600 "$CERT_DRYRUN_LOG" || true
-[[ -f ${CERT_FIREWALL_HELPER:-/nonexistent} ]] && chmod 0755 "$CERT_FIREWALL_HELPER" || true
+PERMISSIONS_OK=1
+normalize_owned_mode() {
+    local mode=$1 path=${2:-}
+    [[ -n $path && ( -e $path || -L $path ) ]] || return 0
+    if [[ -L $path || ! -f $path ]] || ! chmod "$mode" "$path"; then
+        PERMISSIONS_OK=0
+    fi
+}
+chmod 0700 /etc/cheburnet-tuning "$STATE_DIR" "$SNAPSHOT_DIR" "$BACKUP_DIR" 2>/dev/null || PERMISSIONS_OK=0
+normalize_owned_mode 0600 "$RESERVED_BASELINE_FILE"
+normalize_owned_mode 0600 "$UDP_PORTS_FILE"
+normalize_owned_mode 0600 "${PANEL_IP_FILE:-}"
+normalize_owned_mode 0755 "$ZRAM_SETUP"
+normalize_owned_mode 0755 "$RPS_SETUP"
+normalize_owned_mode 0755 "${POST_REBOOT_SCRIPT:-}"
+normalize_owned_mode 0600 "${POST_REBOOT_MARKER:-}"
+normalize_owned_mode 0600 "${POST_REBOOT_LOG:-}"
+normalize_owned_mode 0600 "${CERT_DRYRUN_STAMP:-}"
+normalize_owned_mode 0600 "${CERT_DRYRUN_LOG:-}"
+normalize_owned_mode 0755 "${CERT_FIREWALL_HELPER:-}"
 if [[ -n $CHOWN_BIN ]]; then
-    "$CHOWN_BIN" -R root:root /etc/cheburnet-tuning "$STATE_DIR" >/dev/null 2>&1 || true
+    "$CHOWN_BIN" -R root:root /etc/cheburnet-tuning "$STATE_DIR" >/dev/null 2>&1 || PERMISSIONS_OK=0
+else
+    PERMISSIONS_OK=0
 fi
-SECURITY_FILES_STATUS="права собственных файлов нормализованы"
-ok "Права на собственные конфигурации/снимки ЧебурNET нормализованы"
+if (( PERMISSIONS_OK )); then
+    SECURITY_FILES_STATUS="права собственных файлов нормализованы"
+    ok "Права на собственные конфигурации/снимки ЧебурNET нормализованы"
+else
+    SECURITY_FILES_STATUS="не удалось нормализовать права всех собственных файлов"
+    warn "$SECURITY_FILES_STATUS"
+fi
 
 # ============================================================
 # Финальная проверка всех компонентов
@@ -4702,9 +4748,16 @@ else
     final_warn "ZRAM" "не активен — ${ZRAM_STATUS:-причина не определена}"
 fi
 
-if (( CPU <= 1 )); then final_skip "RPS / ядра" "1 vCPU — не требуется"
-elif [[ ${RPS_STATUS:-} == *"не требуется"* || ${RPS_STATUS:-} == *"mask="* || ${RPS_STATUS:-} == *"настро"* || ${RPS_STATUS:-} == *"включ"* ]]; then final_ok "RPS / ядра" "$RPS_STATUS"
-else final_warn "RPS / ядра" "${RPS_STATUS:-статус не подтверждён}"; fi
+if (( CPU <= 1 || RXQ_COUNT >= CPU )); then
+    final_skip "RPS / ядра" "не требуется для текущих CPU/RX"
+else
+    RPS_ACTUAL=0
+    for q in "${RXQS[@]}"; do
+        if [[ -r $q/rps_cpus ]] && rps_value_nonzero "$(cat "$q/rps_cpus")"; then RPS_ACTUAL=1; fi
+    done
+    if (( RPS_ACTUAL )); then final_ok "RPS / ядра" "активная маска подтверждена"
+    else final_warn "RPS / ядра" "активная маска не подтверждена"; fi
+fi
 
 if [[ -n $DOCKER_BIN ]] && "$DOCKER_BIN" inspect --type container remnanode >/dev/null 2>&1; then
     RUNNING=$($DOCKER_BIN inspect --type container -f '{{.State.Running}}' remnanode 2>/dev/null || true)
@@ -4717,14 +4770,12 @@ fi
 if [[ $SECURITY_ENABLED == 1 ]]; then
     if [[ -n $FAIL2BAN_CLIENT_BIN ]] && "$FAIL2BAN_CLIENT_BIN" status sshd >/dev/null 2>&1; then
         final_ok "Fail2ban" "jail sshd активен"
-    elif [[ ${FAIL2BAN_STATUS:-} == *"актив"* || ${FAIL2BAN_STATUS:-} == *"защищ"* ]]; then
-        final_ok "Fail2ban" "$FAIL2BAN_STATUS"
     elif [[ ${FAIL2BAN_STATUS:-} == *"sshd не обнаружен"* ]]; then
         final_skip "Fail2ban" "sshd не обнаружен — не требуется"
     else
         final_warn "Fail2ban" "${FAIL2BAN_STATUS:-не подтверждён}"
     fi
-    if [[ ${UPDATES_STATUS:-} == *"включ"* || ${UPDATES_STATUS:-} == *"настро"* ]]; then final_ok "Security updates" "$UPDATES_STATUS"; else final_warn "Security updates" "${UPDATES_STATUS:-не подтверждены}"; fi
+    if apt-config dump | grep -E '^APT::Periodic::Unattended-Upgrade[[:space:]]+"1"' >/dev/null; then final_ok "Обновления безопасности" "$UPDATES_STATUS"; else final_warn "Обновления безопасности" "не подтверждены"; fi
 else
     final_skip "Безопасность" "CHEBURNET_SECURITY=0"
 fi
@@ -4763,14 +4814,14 @@ else
 fi
 
 if [[ $SYSTEM_MAINTENANCE == 1 ]]; then
-    if [[ ${NTP_STATUS:-} == *"синхрон"* || ${NTP_STATUS:-} == *"актив"* ]]; then
+    if [[ -n $TIMEDATECTL_BIN && $("$TIMEDATECTL_BIN" show -p NTPSynchronized --value 2>/dev/null) == yes ]]; then
         final_ok "NTP / время" "$NTP_STATUS"
     elif [[ ${NTP_STATUS:-} == *"timedatectl/systemd недоступны"* ]]; then
         final_skip "NTP / время" "$NTP_STATUS"
     else
         final_warn "NTP / время" "${NTP_STATUS:-не подтверждено}"
     fi
-    if [[ ${FSTRIM_STATUS:-} == *"включ"* || ${FSTRIM_STATUS:-} == *"уже"* ]]; then final_ok "TRIM" "$FSTRIM_STATUS"; else final_skip "TRIM" "${FSTRIM_STATUS:-не требуется/не поддерживается}"; fi
+    if [[ -n $SYSTEMCTL_BIN ]] && "$SYSTEMCTL_BIN" is-active --quiet fstrim.timer; then final_ok "TRIM" "таймер активен"; else final_skip "TRIM" "${FSTRIM_STATUS:-не требуется/не поддерживается}"; fi
 else
     final_skip "Обслуживание" "CHEBURNET_SYSTEM_MAINTENANCE=0"
 fi
@@ -4805,7 +4856,7 @@ else
 fi
 
 if [[ $SECURITY_ENABLED == 1 ]]; then
-    if [[ ${SSH_SECURITY_STATUS:-} == *"password=no"* ]]; then
+    if [[ -n $SSHD_BIN ]] && "$SSHD_BIN" -T | grep -q '^passwordauthentication no$'; then
         final_ok "SSH-аудит" "$SSH_SECURITY_STATUS"
     elif [[ ${SSH_SECURITY_STATUS:-} == *"sshd не обнаружен"* ]]; then
         final_skip "SSH-аудит" "sshd не обнаружен"

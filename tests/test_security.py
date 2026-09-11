@@ -32,7 +32,7 @@ class SecurityTests(unittest.TestCase):
         tuning = (ROOT/'vendor/cheburnet-auto-tuning.sh').read_text(encoding='utf-8')
         traffic_control = (ROOT/'src/cheburnet-traffic-control.py').read_text(encoding='utf-8')
         self.assertIn('VERSION = "1.0.0"', traffic_control)
-        self.assertIn('input(confirmation_prompt(label + " [Д/Н]: "))', traffic_control)
+        self.assertIn('input(confirmation_prompt(label + " [Д/Н; Enter — Н]: "))', traffic_control)
         self.assertIn('module.main(args)', installer)
         self.assertIn('settings = json.loads(settings_path.read_text', installer)
         self.assertIn('Автоматически использованы параметры текущего SSH-подключения', installer)
@@ -44,14 +44,15 @@ class SecurityTests(unittest.TestCase):
     def test_install_prompt_and_final_component_report(self):
         installer = (ROOT/'src/installer.sh').read_text(encoding='utf-8')
         self.assertIn("confirm_install() { ask_yes 'Установить на машину ЧебурNET Vision?'; }", installer)
-        self.assertIn("step 'ИТОГОВЫЙ ОТЧЁТ ПО КОМПОНЕНТАМ'", installer)
+        report = (ROOT/'src/component_report.py').read_text(encoding='utf-8')
+        self.assertIn("ui.heading('ИТОГОВЫЙ ОТЧЁТ ПО КОМПОНЕНТАМ')", report)
         self.assertIn("installation_report \"$rc\"", installer)
-        self.assertIn("column_width - ${#component}", installer)
+        self.assertIn('component_report.py', installer)
         self.assertIn('"$BOLD" "$YELLOW" "$1"', installer)
         for component in ('Docker Engine', 'RemnaNode', 'API ноды (mTLS)', 'Xray Core',
                           'nginx и сайт-заглушка', 'TLS-сертификат',
                           'ЧебурNET Traffic Control', 'Профиль TLS/443'):
-            self.assertIn(component, installer)
+            self.assertIn(component, report)
 
     def test_release_version_and_component_order(self):
         installer = (ROOT/'src/installer.sh').read_text(encoding='utf-8')
@@ -141,6 +142,7 @@ class SecurityTests(unittest.TestCase):
 [[ $1 == -t ]] && exit 0
 printf 'allowtcpforwarding %s\npasswordauthentication yes\npubkeyauthentication yes\npermitrootlogin prohibit-password\nkbdinteractiveauthentication no\nauthenticationmethods any\n' "${FORWARD_MODE:-yes}"
 if grep -q '^MaxAuthTries' "$TEST_DROPIN"; then
+  if [[ $AUTH_TRIES == signal ]]; then kill -TERM "$PPID"; exit 0; fi
   printf 'maxauthtries %s\nlogingracetime 30\nallowagentforwarding no\npermittunnel no\nx11forwarding no\ngatewayports no\n' "$AUTH_TRIES"
 else
   printf 'maxauthtries 6\n'
@@ -155,7 +157,7 @@ printf 'systemctl %s\n' "$*" >> "$TEST_EVENTS"
 ''')
             (root/'bin/sysctl').write_text('#!/bin/bash\nprintf "sysctl %s\\n" "$*" >> "$TEST_EVENTS"\n')
             for p in (root/'bin').iterdir(): p.chmod(0o700)
-            for tries in ('3','6'):
+            for tries in ('3','6','signal'):
                 dropin.write_text(original)
                 events=root/'events';events.write_text('')
                 env={**os.environ,'PATH':str(root/'bin')+':'+os.environ['PATH'],

@@ -87,7 +87,7 @@ def collect(target):
               ('email', "Email для сертификата Let's Encrypt", None)]
     for field, label, default in fields:
         while True:
-            value = input(label + (f' [{default}]' if default else '') + ': ')
+            value = input(confirmation_prompt(label + (f' [{default}]' if default else '') + ': '))
             value = value or default or ''
             try:
                 s = validate(dict(s, **{field: value}))
@@ -96,7 +96,7 @@ def collect(target):
                 print(f'Ошибка: {e} Повторите только это поле.', file=sys.stderr)
     print(f'Образ: {NODE_IMAGE}; версия панели {s["panel_version"]} прошла проверку требований SNI.')
     while True:
-        secret = getpass.getpass('Секретный ключ ноды из панели (ввод скрыт): ')
+        secret = getpass.getpass(confirmation_prompt('Секретный ключ ноды из панели (ввод скрыт): '))
         try:
             validate_key(secret)
             break
@@ -106,7 +106,7 @@ def collect(target):
     print('Секрет получен и проверен; его значение не выводится.')
     while True:
         try:
-            prompt = confirmation_prompt('Начать установку с этими настройками? [Д/Н, по умолчанию Н]: ')
+            prompt = confirmation_prompt('Начать установку с этими настройками? [Д/Н; Enter — Н]: ')
             if not parse_yes_no(input(prompt) or 'Н'):
                 raise KeyboardInterrupt
             break
@@ -150,13 +150,18 @@ def preflight_dns(settings):
 def write(path, content, mode=0o600):
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8', dir=path.parent, delete=False) as f:
-        f.write(content)
-        f.flush()
-        os.fsync(f.fileno())
-        tmp = f.name
-    os.chmod(tmp, mode)
-    os.replace(tmp, path)
+    tmp = None
+    try:
+        with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8', dir=path.parent, delete=False) as f:
+            tmp = f.name
+            os.fchmod(f.fileno(), mode)
+            f.write(content)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, path)
+    finally:
+        if tmp is not None and os.path.exists(tmp):
+            os.unlink(tmp)
     fd = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
     try:
         os.fsync(fd)
@@ -298,7 +303,8 @@ def validate_key(key):
             value = data[field].replace('\\n', '\n').replace('\r\n', '\n').strip() + '\n'
             write(p / field, value)
         def check(*args):
-            r = subprocess.run(['openssl', *map(str, args)], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            r = subprocess.run(['openssl', *map(str, args)], stdin=subprocess.DEVNULL,
+                               stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=15)
             if r.returncode:
                 raise ValueError('Ключ ноды: сертификат/подпись/срок/приватный ключ не прошёл проверку.')
             return r.stdout

@@ -85,12 +85,12 @@ def utf8_output():
 
 def symbol(name):
     unicode_symbols = {
-        "heavy": "─", "light": "─", "ok": "✓", "warn": "!",
-        "error": "✗", "info": "›", "idle": "!", "pending": "!",
+        "heavy": "─", "light": "─", "ok": "[✓]", "warn": "[!]",
+        "error": "[✗]", "info": "[•]", "idle": "[!]", "pending": "[!]",
     }
     ascii_symbols = {
-        "heavy": "-", "light": "-", "ok": "[OK]", "warn": "!",
-        "error": "[ERR]", "info": ">", "idle": "!", "pending": "!",
+        "heavy": "-", "light": "-", "ok": "[+]", "warn": "[!]",
+        "error": "[X]", "info": "[i]", "idle": "[!]", "pending": "[!]",
     }
     return (unicode_symbols if decorated() else ascii_symbols)[name]
 
@@ -526,8 +526,17 @@ def save(state):
 
 def load():
     state = json.loads(STATE.read_text(encoding="utf-8"))
-    if state.get("schema") != 1:
+    if not isinstance(state, dict) or state.get("schema") != 1:
         raise ValueError("Неизвестная версия конфигурации.")
+    if (not isinstance(state.get("lists"), dict) or
+            not all(isinstance(v, list) for v in state["lists"].values()) or
+            not all(isinstance(state.get(k), list) for k in ("allow", "manual", "ssh_ports")) or
+            not isinstance(state.get("updated"), (int, float))):
+        raise ValueError("Повреждена структура конфигурации Traffic Control.")
+    try:
+        render(state)  # Проверка всех адресов и портов до любых изменений.
+    except (TypeError, KeyError, ValueError) as exc:
+        raise ValueError("Некорректные адреса или порты в конфигурации Traffic Control.") from exc
     return state
 
 
@@ -535,7 +544,7 @@ def host(value):
     return str(ipaddress.ip_address(value))
 
 
-def render(state, exists=False):
+def render(state, exists=False, acme=False):
     ports = sorted(set(int(p) for p in state["ssh_ports"]))
     if not ports or any(p < 1 or p > 65535 for p in ports):
         raise ValueError("Некорректные SSH-порты.")
@@ -554,8 +563,10 @@ def render(state, exists=False):
             if nets:
                 lines += ["  elements = { " + ", ".join(map(str, nets)) + " };"]
             lines += [" }"]
-    lines += [" chain ingress {", "  type filter hook input priority -10; policy accept;",
-              '  iifname "lo" return', "  ct state established,related return",
+    lines += [" chain ingress {", "  type filter hook input priority -10; policy accept;"]
+    if acme:
+        lines += ['  tcp dport 80 counter return comment "CheburNET-Vision-ACME-temporary"']
+    lines += ['  iifname "lo" return', "  ct state established,related return",
               "  tcp dport { " + ", ".join(map(str, ports)) + " } return",
               "  ip saddr @allow4 return", "  ip6 saddr @allow6 return"]
     for version in (4, 6):
@@ -572,8 +583,111 @@ def present():
                x.get("table", {}).get("name") == TABLE for x in tables["nftables"])
 
 
+def live_rules_match(state):
+    """Проверять содержание таблицы, а не только существование её имени.
+
+    Счётчики/handle меняются при работе. Сопоставляем наборы адресов и
+    упорядоченные правила; временное собственное правило ACME допустимо.
+    Неизвестный формат JSON считается непроверенным, а не успешным.
+    """
+    data = json.loads(run("nft", "-j", "list", "table", "inet", TABLE).stdout)
+    objects = data["nftables"]
+    tables = [x["table"] for x in objects if "table" in x]
+    if len(tables) != 1 or tables[0].get("flags"):
+        return False
+    chains = [x["chain"] for x in objects if "chain" in x]
+    if len(chains) != 1:
+        return False
+    chain = chains[0]
+    if any(chain.get(k) != v for k, v in dict(name="ingress", type="filter",
+                                             hook="input", prio=-10, policy="accept").items()):
+        return False
+
+    def nets(items):
+        result = []
+        for item in items:
+            if isinstance(item, dict) and "elem" in item:
+                item = item["elem"]["val"]
+            if isinstance(item, dict) and "prefix" in item:
+                p = item["prefix"]
+                item = str(p["addr"]) + "/" + str(p["len"])
+            if isinstance(item, dict) and "range" in item:
+                lo, hi = map(ipaddress.ip_address, item["range"])
+                result.extend(ipaddress.summarize_address_range(lo, hi))
+            else:
+                result.append(ipaddress.ip_network(item, strict=False))
+        return {str(n) for v in (4, 6) for n in ipaddress.collapse_addresses(
+            n for n in result if n.version == v)}
+
+    expected = {"allow": state["allow"], "block": state["manual"] +
+                [entry for entries in state["lists"].values() for entry in entries]}
+    sets = {x["set"]["name"]: x["set"] for x in objects if "set" in x}
+    if set(sets) != {"allow4", "allow6", "block4", "block6"}:
+        return False
+    for prefix, entries in expected.items():
+        for v in (4, 6):
+            actual = sets[prefix + str(v)]
+            selected = [x for x in entries if ipaddress.ip_network(x, strict=False).version == v]
+            if actual.get("type") != f"ipv{v}_addr" or nets(actual.get("elem", [])) != nets(selected):
+                return False
+
+    rules = [x["rule"] for x in objects if "rule" in x]
+    signatures = []
+    for rule in rules:
+        if rule.get("chain") != "ingress":
+            return False
+        expr = rule.get("expr", [])
+        if rule.get("comment") == "CheburNET-Vision-ACME-temporary":
+            # Не разрешаем комментарию скрыть произвольное широкое accept.
+            clean = [x for x in expr if "counter" not in x]
+            if clean != [{"match": {"op": "==", "left": {"payload": {"protocol": "tcp", "field": "dport"}}, "right": 80}}, {"return": None}]:
+                return False
+            continue
+        if any("log" in x for x in expr):
+            # Только non-terminal logging: log+accept/return нельзя скрыть.
+            if not all(len(x) == 1 and next(iter(x)) in ("match", "limit", "log", "counter") for x in expr):
+                return False
+            continue
+        clean = [x for x in expr if "counter" not in x]
+        signatures.append(clean)
+
+    def match(left, right, verdict="return", op="=="):
+        return [{"match": {"op": op, "left": left, "right": right}}, {verdict: None}]
+    ports = sorted(set(state["ssh_ports"]))
+    expected_rules = [match({"meta": {"key": "iifname"}}, "lo"),
+                      match({"ct": {"key": "state"}}, {"set": ["established", "related"]}, op="in"),
+                      match({"payload": {"protocol": "tcp", "field": "dport"}}, {"set": ports})]
+    for prefix, verdict in (("allow", "return"), ("block", "drop")):
+        for v, protocol in ((4, "ip"), (6, "ip6")):
+            expected_rules.append(match({"payload": {"protocol": protocol, "field": "saddr"}},
+                                        "@" + prefix + str(v), verdict))
+    # nft versions differ between ==/in and singleton sets. Normalize only these.
+    def normalize(rows):
+        for row in rows:
+            for e in row:
+                if "match" in e:
+                    m = e["match"]
+                    if m["op"] in ("==", "in"):
+                        m["op"] = "in"
+                    if isinstance(m["right"], dict) and "set" in m["right"]:
+                        values = sorted(m["right"]["set"], key=str)
+                        m["right"] = values[0] if len(values) == 1 else {"set": values}
+        return rows
+    return normalize(signatures) == normalize(expected_rules)
+
+
 def apply(state):
-    rules = render(state, present())
+    # Общая блокировка main()/ACME исключает гонку открытия и обновления.
+    # Срок аренды ограничен; после перезагрузки /run очищается.
+    lease = Path("/run/cheburnet-vision-acme-open")
+    acme = False
+    if lease.exists() and not lease.is_symlink() and lease.stat().st_uid == 0:
+        try:
+            age = time.time() - float(lease.read_text().strip())
+            acme = 0 <= age <= 1200
+        except (OSError, ValueError):
+            pass
+    rules = render(state, present(), acme=acme)
     run("nft", "-c", "-f", "-", data=rules, timeout=300)
     run("nft", "-f", "-", data=rules, timeout=300)
 
@@ -716,12 +830,12 @@ def ip_list(value):
 
 def ask_yes(label):
     while True:
-        answer = input(confirmation_prompt(label + " [Д/Н]: ")).strip().lower()
-        if answer in ("д", "да"):
+        answer = input(confirmation_prompt(label + " [Д/Н; Enter — Н]: ")).strip().lower()
+        if answer in ("д", "да", "y", "yes"):
             return True
-        if answer in ("н", "нет"):
+        if answer in ("", "н", "нет", "n", "no"):
             return False
-        warn("Введите Д или Н.")
+        warn("Введите Д/да/Y/yes или Н/нет/N/no.")
 
 
 def brand_header():
@@ -768,7 +882,7 @@ def ask_value(label, candidate, validator):
             return validator(candidate)
     while True:
         try:
-            return validator(input("  " + label + " (введите своё значение): ").strip())
+            return validator(input(confirmation_prompt("  " + label + " (введите своё значение): ")).strip())
         except (ValueError, OSError):
             warn("Некорректное значение. Повторите ввод.")
 
@@ -831,11 +945,11 @@ def install_inputs(args):
 
 
 def install(args):
-    if STATE.exists() or BIN.exists() or present():
+    if path_exists(STATE) or path_exists(BIN) or present():
         raise ValueError("Установка или таблица уже существует. Автоперезапись запрещена.")
     if path_exists(SHORT_BIN) and not shortcut_valid():
         raise ValueError(f"Путь {SHORT_BIN} уже занят. Установка ничего не изменила.")
-    if any((SYSTEMD / name).exists() for name in service_files()):
+    if any(path_exists(SYSTEMD / name) for name in service_files()):
         raise ValueError("Конфликт имён systemd. Ничего не перезаписано.")
     ports, allow = install_inputs(args)
     state = dict(schema=1, ssh_ports=ports, allow=sorted(set(allow)), manual=[],
@@ -990,7 +1104,11 @@ def diagnostic_items(state):
         add("Незавершённое включение", table and unit_state("is-active", UNIT + "-rollback.timer") == "active",
             "таймер отката активен")
     elif enabled:
-        add("Рабочая таблица", table, "загружена" if table else "отсутствует")
+        try:
+            verified = table and live_rules_match(state)
+        except (OSError, ValueError, TypeError, KeyError, subprocess.SubprocessError):
+            verified = False
+        add("Рабочие правила", verified, "соответствуют конфигурации" if verified else "отсутствуют или отличаются")
         service_ok = unit_state("is-enabled", UNIT + ".service") == "enabled"
         timer_ok = (unit_state("is-enabled", UNIT + "-update.timer") == "enabled" and
                     unit_state("is-active", UNIT + "-update.timer") == "active")
@@ -1227,7 +1345,7 @@ def menu():
                 err("Топ-10 временно недоступен: " + safe_label(exc))
         print()
         rule("─", style="cyan")
-        choice = input(colored("  Выберите действие: ", "cyan", "bold")).strip()
+        choice = input(confirmation_prompt("  Выберите действие: ")).strip()
         if choice == "0":
             return
         command = ("install" if not installed and choice == "1" else
@@ -1236,12 +1354,13 @@ def menu():
                     "9": "disable", "10": "uninstall", "11": "check",
                     "12": "rules", "13": "logs"}.get(choice) if installed else None)
         if not command:
+            warn("Такого пункта нет. Выберите номер из меню.")
             continue
         args = [command]
         if command in ("ban", "unban", "allow", "disallow"):
-            args.append(input(colored("  IP (для ручного бана также CIDR): ", "cyan")).strip())
+            args.append(input(confirmation_prompt("  IP (для ручного бана также CIDR): ")).strip())
         if command == "uninstall":
-            if input(confirmation_prompt("  Выполнить удаление? Введите Д: ")).strip().lower() != "д":
+            if not ask_yes("  Удалить программу и службы? Конфигурация останется на диске."):
                 continue
             args.append("--yes")
         try:
@@ -1254,7 +1373,7 @@ def menu():
             return
         if command == "install":
             continue
-        input(colored("  Enter — вернуться в меню: ", "dim"))
+        input(confirmation_prompt("  Enter — вернуться в меню: "))
 
 
 def normalize_argv(argv):
@@ -1373,7 +1492,7 @@ def main(argv=None):
             raise ValueError("Восстановление отменено пользователем.")
         args.yes = True
     try:
-        if args.command != "check":
+        if args.command != "check" and not (args.command == "status" and args.json):
             ensure_dependencies(auto_install=args.command in ("install", "repair"))
     except (ValueError, OSError, subprocess.SubprocessError) as exc:
         raise ValueError(str(exc)) from exc
@@ -1392,7 +1511,8 @@ def main(argv=None):
 
 if __name__ == "__main__":
     try:
-        main()
+        # Диагностика возвращает число проблем; оболочка должна увидеть отказ.
+        sys.exit(1 if main() else 0)
     except KeyboardInterrupt:
         print(file=sys.stderr)
         message("info", "Операция прервана пользователем.", file=sys.stderr)

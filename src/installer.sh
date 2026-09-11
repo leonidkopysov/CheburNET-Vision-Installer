@@ -19,15 +19,37 @@ STAGING=''
 ACME_OPEN=0
 APT_APPROVED=0
 CYAN='' GREEN='' YELLOW='' RED='' BOLD='' RESET=''
-if [[ -t 1 && -z ${NO_COLOR:-} ]]; then
+if [[ -t 1 && ! ${NO_COLOR+x} ]]; then
     CYAN=$'\033[36m'; GREEN=$'\033[32m'; YELLOW=$'\033[33m'; RED=$'\033[31m'
     BOLD=$'\033[1m'; RESET=$'\033[0m'
 fi
 say() { printf '%s\n' "$*"; }
-step() { printf '\n%s%s━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n  ◆ %s\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━%s\n' "$BOLD" "$CYAN" "$*" "$RESET"; }
-ok() { printf '  %s✓%s %s\n' "$GREEN" "$RESET" "$*"; }
-warn() { printf '  %s!%s %s\n' "$YELLOW" "$RESET" "$*"; }
-skip() { printf '  ○ %s\n' "$*"; }
+ui_file() {
+    if [[ -n $WORK && -f $WORK/terminal_ui.py ]]; then printf '%s' "$WORK/terminal_ui.py"
+    elif [[ -f $BASE/terminal_ui.py ]]; then printf '%s' "$BASE/terminal_ui.py"
+    fi
+}
+step() {
+    local ui; ui=$(ui_file)
+    if [[ -n $ui ]]; then python3 "$ui" heading "$*"
+    else printf '\n%s%s──────────────────────────────────────────────\n  %s\n──────────────────────────────────────────────%s\n' "$BOLD" "$CYAN" "$*" "$RESET"
+    fi
+}
+ok() {
+    local ui; ui=$(ui_file)
+    if [[ -n $ui ]]; then python3 "$ui" ok "$*"
+    else printf '  %s[✓]%s %s\n' "$GREEN" "$RESET" "$*"; fi
+}
+warn() {
+    local ui; ui=$(ui_file)
+    if [[ -n $ui ]]; then python3 "$ui" warn "$*"
+    else printf '  %s[!]%s %s\n' "$YELLOW" "$RESET" "$*"; fi
+}
+skip() {
+    local ui; ui=$(ui_file)
+    if [[ -n $ui ]]; then python3 "$ui" info "$*"
+    else printf '  [•] %s\n' "$*"; fi
+}
 banner() {
     step "ЧебурNET · VISION / $CHEBURNET_VERSION"
     say '  Установка и настройка VPN-ноды'
@@ -48,12 +70,16 @@ banner() {
     say '  Системные компоненты и обновления будут проверены перед настройкой.'
     say ''
     say '  Д/Y — да · Н/N — нет. Enter без ответа означает «Нет».'
-    say '  ✓ выполнено · ○ пропущено · ! внимание · ✗ ошибка'
+    say '  [✓] выполнено · [•] информация · [!] внимание · [✗] ошибка'
 }
 ask_yes() {
     local answer
+    local BOLD=$BOLD YELLOW=$YELLOW RESET=$RESET
+    if [[ -t 0 && ! ${NO_COLOR+x} && ${TERM:-} != dumb ]]; then
+        BOLD=$'\033[1m'; YELLOW=$'\033[93m'; RESET=$'\033[0m'
+    fi
     while true; do
-        printf '\n  %s%s%s [Д/Y · Н/N]: %s' "$BOLD" "$YELLOW" "$1" "$RESET" > /dev/tty
+        printf '\n  %s%s%s [Д/Н; Enter — Н]: %s' "$BOLD" "$YELLOW" "$1" "$RESET" > /dev/tty
         IFS= read -r answer < /dev/tty || return 1
         case "$answer" in
             Д|д|Да|да|ДА|дА|[Yy]|[Yy][Ee][Ss]) return 0;;
@@ -64,11 +90,18 @@ ask_yes() {
 }
 confirm_install() { ask_yes 'Установить на машину ЧебурNET Vision?'; }
 die() { printf '\n  %s%s✗ ОШИБКА:%s %s\n' "$BOLD" "$RED" "$RESET" "$*" >&2; exit 1; }
-# shellcheck disable=SC2317
+# shellcheck disable=SC2317,SC2329
 cleanup() {
-    if [[ ${ACME_OPEN:-0} == 1 ]]; then "$BASE/acme-firewall.sh" close || true; fi
+    local rc=$?
+    if [[ ${ACME_OPEN:-0} == 1 ]]; then
+        if ! "$BASE/acme-firewall.sh" close; then
+            printf '  ✗ ОШИБКА: временный TCP/80 не удалось закрыть; проверьте правила ACME.\n' >&2
+            (( rc != 0 )) || rc=1
+        fi
+    fi
     [[ -z $WORK ]] || rm -rf -- "$WORK"
     [[ -z $STAGING ]] || rm -rf -- "$STAGING"
+    exit "$rc"
 }
 trap cleanup EXIT
 trap 'exit 130' INT
@@ -372,7 +405,7 @@ EOF
 prepare_stack() {
     step '04 / Образ ноды и два Unix-сокета'
     compose config -q
-    compose pull
+    timeout --foreground 900 docker compose --project-directory "$BASE" -f "$BASE/docker-compose.yml" pull
     local image digest
     image=$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1],encoding="utf-8"))["services"]["remnanode"]["image"])' \
       "$BASE/docker-compose.yml")
@@ -386,7 +419,9 @@ from pathlib import Path
 p=Path(sys.argv[1]);v=json.loads(p.read_text(encoding='utf-8'));digest=sys.argv[2]
 assert '@sha256:' in digest,'Image digest missing'
 v['services']['remnanode']['image']=digest
-p.write_text(json.dumps(v,indent=2)+'\n',encoding='utf-8')
+sys.path.insert(0,str(p.parent))
+from runtime import json_write
+json_write(p,v)
 PY
     systemctl enable --now cheburnet-decoy.service
     ok 'Образ закреплён по digest; служба Unix-сайта запущена.'
@@ -401,7 +436,8 @@ apply_tuning() {
     CHEBURNET_ASSUME_YES=1 CHEBURNET_PANEL_PORT="$port" CHEBURNET_PANEL_IPS="$ips" \
       CHEBURNET_SECURITY=1 CHEBURNET_HARDEN_SSH=0 \
       CHEBURNET_FIREWALL_PORTS='tcp:443' CHEBURNET_ENABLE_UFW=1 CHEBURNET_CERTIFICATES=0 \
-      bash "$BASE/vendor/cheburnet-auto-tuning.sh" < /dev/null | tee "$BASE/tuning-report.log"
+      bash "$BASE/vendor/cheburnet-auto-tuning.sh" < /dev/null | tee "$BASE/tuning-report.log" | \
+      python3 "$BASE/terminal_ui.py" filter
     # После тюнинга ограничения API проверяются повторно.
     ufw status | awk '/^Status: active$/ {ok=1} END {exit !ok}' || die 'Продвинутая настройка не активировала UFW. Проверьте её отчёт'
     python3 "$BASE/security_check.py" --firewall
@@ -448,7 +484,7 @@ wait_api() {
     local port i state
     port=$(get_setting node_port)
     for ((i=0; i<45; i++)); do
-        state=$(docker inspect -f '{{.State.Running}}' remnanode 2>/dev/null || printf 'false')
+        state=$(timeout 10 docker inspect -f '{{.State.Running}}' remnanode 2>/dev/null || printf 'false')
         if [[ $state == true ]] && [[ -n $(ss -H -ltn "sport = :$port") ]]; then
             ok "remnanode слушает API TCP/$port (mTLS)."
             return 0
@@ -468,7 +504,7 @@ issue_certificate() {
     install -m 755 "$BASE/acme-post.sh" /etc/letsencrypt/renewal-hooks/post/90-cheburnet-vision
     ACME_OPEN=1
     "$BASE/acme-firewall.sh" open
-    certbot certonly --standalone --preferred-challenges http --cert-name "$domain" -d "$domain" \
+    timeout --foreground 600 certbot certonly --standalone --preferred-challenges http --cert-name "$domain" -d "$domain" \
       --non-interactive --agree-tos --email "$email" --keep-until-expiring
     "$BASE/acme-firewall.sh" close
     ACME_OPEN=0
@@ -481,7 +517,7 @@ issue_certificate() {
     # Проверка staging не устанавливает тестовый сертификат вместо рабочего.
     ACME_OPEN=1
     "$BASE/acme-firewall.sh" open
-    certbot renew --cert-name "$domain" --dry-run
+    timeout --foreground 600 certbot renew --cert-name "$domain" --dry-run --no-random-sleep-on-renew
     "$BASE/acme-firewall.sh" close
     ACME_OPEN=0
     ok 'Сертификат и пробное продление проверены; временный порт 80 закрыт.'
@@ -570,7 +606,7 @@ if len(connection) == 4:
     module.info("SSH: " + ssh_port + "; исключения IP: " + ", ".join(allowed))
 else:
     module.warn("Текущее SSH-подключение не определено; подтвердите предложенные параметры вручную.")
-module.main(args)
+sys.exit(1 if module.main(args) else 0)
 ' "$BASE/cheburnet-traffic-control.py" "$BASE/settings.json" < /dev/tty | tee "$BASE/traffic-control-install.log"
     /usr/local/bin/cheburnet-traffic-control activate
     printf '%s\n' installed > "$marker"
@@ -634,45 +670,8 @@ check() {
     warn 'Доступ из Интернета, связь с панелью и VLESS с реальным пользователем проверьте отдельно.'
 }
 
-report_row() {
-    local component=$1 status=$2 color=${3:-$GREEN}
-    local column_width=34 padding
-    # Bash printf считает ширину UTF-8 по байтам. ${#component} считает
-    # отображаемые символы, поэтому статус всегда начинается в одной колонке.
-    padding=$((column_width - ${#component}))
-    (( padding >= 2 )) || padding=2
-    printf '  %s%*s%s%s%s\n' "$component" "$padding" '' "$color" "$status" "$RESET"
-}
-
 installation_report() {
-    local rc=$1 traffic_choice
-    traffic_choice=$(cat "$BASE/.traffic-control-choice" 2>/dev/null || true)
-    step 'ИТОГОВЫЙ ОТЧЁТ ПО КОМПОНЕНТАМ'
-    report_row 'КОМПОНЕНТ' 'СТАТУС' "$BOLD$CYAN"
-    say '  ───────────────────────────────────────────────────────────────'
-    report_row 'Система и пакеты' 'ОБНОВЛЕНЫ'
-    report_row 'Docker Engine' 'ЗАПУЩЕН'
-    report_row 'RemnaNode' 'ЗАПУЩЕН'
-    report_row 'API ноды (mTLS)' 'РАБОТАЕТ И ЗАЩИЩЁН'
-    report_row 'Xray Core' 'КОНФИГУРАЦИЯ ПРОВЕРЕНА'
-    report_row 'nginx и сайт-заглушка' 'РАБОТАЮТ ЧЕРЕЗ UNIX-СОКЕТЫ'
-    report_row 'TLS-сертификат' 'ПОЛУЧЕН И ПРОВЕРЕН'
-    report_row 'Автопродление TLS' 'ВКЛЮЧЕНО'
-    report_row 'UFW и защита SSH' 'ВКЛЮЧЕНЫ'
-    report_row 'Продвинутая настройка' 'ПРИМЕНЕНА'
-    report_row 'Защита от Two-Way Ping' 'ВКЛЮЧЕНА'
-    case "$traffic_choice" in
-        installed) report_row 'ЧебурNET Traffic Control' 'ВКЛЮЧЁН И ПРОВЕРЕН';;
-        skipped) report_row 'ЧебурNET Traffic Control' 'ПРОПУЩЕН ПО ВЫБОРУ' "$YELLOW";;
-        *) report_row 'ЧебурNET Traffic Control' 'СТАТУС НЕ ОПРЕДЕЛЁН' "$RED";;
-    esac
-    if [[ $rc == 2 ]]; then
-        report_row 'Профиль TLS/443' 'ОЖИДАЕТ ПРИМЕНЕНИЯ В REMNAWAVE' "$YELLOW"
-    else
-        report_row 'Профиль TLS/443' 'ПРОВЕРЕН'
-    fi
-    say '  ───────────────────────────────────────────────────────────────'
-    report_row 'Итог установки' 'ЗАВЕРШЕНА'
+    python3 "$BASE/component_report.py" "$1"
 }
 
 show_result() {
@@ -689,7 +688,8 @@ publish_project() {
     local name
     local -a managed=(runtime.py renew-hook.sh acme-firewall.sh acme-pre.sh acme-post.sh
         check-nofile.sh hardening.sh security_check.py cheburnet-traffic-control.py
-        cheburnet-two-way-ping.sh cheburnet-two-way-ping.service)
+        cheburnet-two-way-ping.sh cheburnet-two-way-ping.service
+        terminal_ui.py component_report.py)
     [[ ! -e $BASE && ! -L $BASE ]] || die "Каталог $BASE уже существует; публикация отменена"
     # До атомарного переименования BASE не существует. Обычная ошибка удаляет
     # только этот временный каталог; SIGKILL оставляет безопасный staging-снимок.
@@ -849,11 +849,29 @@ EOF
     flock -n 9 || die 'Другой экземпляр уже работает.'
     case "$action" in
         --show) show_result; return;;
-        --check) check; return;;
+        --check)
+            local check_rc=0 report_rc=0
+            bash "$BASE/installer.sh" --check-internal || check_rc=$?
+            if [[ -f $BASE/component_report.py ]]; then
+                installation_report "$check_rc" || report_rc=$?
+            fi
+            (( report_rc == 0 )) || exit 1
+            exit "$check_rc";;
         --resume)
             [[ -f $BASE/.cheburnet-managed ]] || die 'Нет незавершённой установки ЧебурNET.'
             [[ $(cat "$BASE/.cheburnet-managed") == "$CHEBURNET_VERSION" ]] || \
               die 'Версия установленного комплекта отличается. --resume не выполняет миграцию между версиями.'
+            [[ -f $BASE/component_report.py && -f $BASE/terminal_ui.py ]] || \
+              die 'На сервере сохранена другая ревизия комплекта. Используйте её локальный менеджер: bash /opt/remnanode/installer.sh --resume. Автоматическое обновление не выполняется.'
+            if [[ -f $BASE/.installation-complete ]]; then
+                say '  Установка уже завершена. Выполняется только проверка; настройки не меняются.'
+                # Родитель уже держит flock: не запускать публичный --check повторно.
+                local completed_rc=0
+                bash "$BASE/installer.sh" --check-internal || completed_rc=$?
+                installation_report "$completed_rc" || exit 1
+                show_result
+                exit "$completed_rc"
+            fi
             say '  Возобновление с сохранённым доменом и секретом.'
             check_ssh_collision "$(get_setting node_port)"
             python3 "$BASE/runtime.py" check-dns --settings "$BASE/settings.json"
@@ -883,7 +901,10 @@ EOF
     # Отдельный процесс сохраняет строгий режим ошибок во всех проверках.
     step 'ИТОГИ УСТАНОВКИ / Проверка компонентов'
     bash "$BASE/installer.sh" --check-internal || rc=$?
-    [[ $rc == 0 || $rc == 2 ]] || die 'Итоговая проверка не прошла.'
+    if [[ $rc != 0 && $rc != 2 ]]; then
+        installation_report "$rc" || true
+        die 'Итоговая проверка не прошла.'
+    fi
     systemd-analyze security cheburnet-decoy.service --no-pager > "$BASE/service-security-report.txt" 2>&1 || skip 'Оценка systemd-analyze недоступна; обязательные параметры проверены отдельно.'
     if [[ $rc == 2 ]]; then
         warn 'Примените профиль в панели: сквозная проверка TLS/443 ещё ожидает выполнения.'
@@ -891,7 +912,8 @@ EOF
         ok 'Локальные проверки компонентов и TLS/443 пройдены.'
     fi
     warn 'Подключение настоящим VLESS-клиентом и доступ извне проверяются отдельно.'
-    installation_report "$rc"
+    installation_report "$rc" || die 'Отчёт обнаружил неисправные компоненты.'
+    printf '%s\n' "$CHEBURNET_VERSION" > "$BASE/.installation-complete"
     show_result
     say "Файлы: $BASE · повторная проверка: bash $BASE/installer.sh --check"
     # exit, а не return: ожидаемое состояние не должно запускать ERR-ловушку.
