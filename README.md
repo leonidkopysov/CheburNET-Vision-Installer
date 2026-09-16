@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="assets/cheburnet-scripts-banner.jpg" alt="ЧебурNET" width="100%">
+<img src="assets/cheburnet-banner.webp" alt="ЧебурNET" width="100%">
 
 # ЧебурNET Vision Installer
 
