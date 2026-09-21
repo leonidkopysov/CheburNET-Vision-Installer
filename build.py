@@ -30,7 +30,10 @@ def build():
             info = tarfile.TarInfo(name)
             info.size, info.mode, info.mtime = len(data), 0o600, 0
             tar.addfile(info, io.BytesIO(data))
-    payload = gzip.compress(output.getvalue(), mtime=0)
+    payload = gzip.compress(output.getvalue(), compresslevel=9, mtime=0)
+    # Python 3.11/3.12 may use the host OS byte when mtime=0.
+    # RFC 1952: 255 means unknown OS; normalize it for cross-platform builds.
+    payload = payload[:9] + b'\xff' + payload[10:]
     encoded = base64.encodebytes(payload).decode('ascii')
     payload_hash = hashlib.sha256(payload).hexdigest()
     func = (f"readonly CHEBURNET_PAYLOAD_SHA256='{payload_hash}'\n\n"

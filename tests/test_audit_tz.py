@@ -260,7 +260,7 @@ active_zram(){ :; }
         from test_shell import SOURCE
         with tempfile.TemporaryDirectory() as td:
             base = Path(td)
-            (base / '.cheburnet-managed').write_text('1.1.3')
+            (base / '.cheburnet-managed').write_text('1.1.4')
             (base / '.installation-complete').touch()
             (base / 'component_report.py').touch()
             (base / 'terminal_ui.py').touch()
