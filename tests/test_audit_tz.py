@@ -232,6 +232,8 @@ ufw --force enable
 SYS=$1
 DEV=/dev/fixture-zram
 SWAPON_BIN=try_swapon
+TIMEOUT_BIN=bounded
+bounded(){ shift 2; "$@"; }
 try_swapon(){ echo SWAPON; return 9; }
 active_zram(){ :; }
 ''' + block + '\necho REFORMAT\n'
@@ -239,7 +241,7 @@ active_zram(){ :; }
             self.assertEqual(p.returncode, 9)
             self.assertEqual(p.stdout.strip(), 'SWAPON')
             self.assertEqual(disk.read_text(), '1048576')
-        self.assertIn('"$SYSTEMCTL_BIN" restart cheburnet-zram.service', VENDOR)
+        self.assertIn('zram_restart_unit cheburnet-zram.service', VENDOR)
 
     def test_repeat_tuning_preserves_owned_kernel_ceiling(self):
         block = VENDOR.split('NR_OPEN_TARGET=1048576', 1)[1].split('# ============================================================', 1)[0]
@@ -258,7 +260,7 @@ active_zram(){ :; }
         from test_shell import SOURCE
         with tempfile.TemporaryDirectory() as td:
             base = Path(td)
-            (base / '.cheburnet-managed').write_text('1.1.3')
+            (base / '.cheburnet-managed').write_text('1.1.4')
             (base / '.installation-complete').touch()
             (base / 'component_report.py').touch()
             (base / 'terminal_ui.py').touch()

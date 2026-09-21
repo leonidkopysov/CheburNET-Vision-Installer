@@ -8,7 +8,7 @@ from pathlib import Path
 import tarfile
 
 ROOT = Path(__file__).resolve().parent
-TUNING_SHA256 = '52ca38230b9bc4fde4eff818be87e72d978c191d5ea12c099ff904f3a35acc39'
+TUNING_SHA256 = '8687fdaf9d34c47e292ff50ddce7a29f993731d2c5a5cb6360516339272524af'
 TRAFFIC_CONTROL_SHA256 = '1726074533b2ef24f4be6b1039564575cbf2df304c077c51c16fe8ceb2654320'
 
 
@@ -30,26 +30,29 @@ def build():
             info = tarfile.TarInfo(name)
             info.size, info.mode, info.mtime = len(data), 0o600, 0
             tar.addfile(info, io.BytesIO(data))
-    payload = gzip.compress(output.getvalue(), mtime=0)
+    payload = gzip.compress(output.getvalue(), compresslevel=9, mtime=0)
+    # Python 3.11/3.12 may use the host OS byte when mtime=0.
+    # RFC 1952: 255 means unknown OS; normalize it for cross-platform builds.
+    payload = payload[:9] + b'\xff' + payload[10:]
     encoded = base64.encodebytes(payload).decode('ascii')
     payload_hash = hashlib.sha256(payload).hexdigest()
     func = (f"readonly CHEBURNET_PAYLOAD_SHA256='{payload_hash}'\n\n"
             + "payload() {\n    cat <<'CHEBURNET_PAYLOAD'\n"
             + encoded + 'CHEBURNET_PAYLOAD\n}\n\n')
-    source = (ROOT/'src/installer.sh').read_text()
+    source = (ROOT/'src/installer.sh').read_text(encoding='utf-8')
     assert '@PAYLOAD_SHA256@' not in source, 'Obsolete payload placeholder in manager source'
     marker = '# Private child entry'
     assert source.count(marker) == 1, 'Payload insertion marker missing or duplicated'
     source = source.replace(marker, func + marker)
     assert source.count('payload() {') == 1, 'Payload function was not injected'
     assert f"readonly CHEBURNET_PAYLOAD_SHA256='{payload_hash}'" in source, 'Payload hash was not injected'
-    manager = (ROOT/'src/installer.sh').read_text()
+    manager = (ROOT/'src/installer.sh').read_text(encoding='utf-8')
     assert '@PAYLOAD_SHA256@' not in manager, 'Payload placeholder leaked into manager'
     assert 'payload() {' not in manager, 'Manager must not contain the embedded archive'
     dest = ROOT/'cheburnet-vision-install.sh'
-    dest.write_text(source)
+    dest.write_text(source, encoding='utf-8', newline='\n')
     dest.chmod(0o755)
-    (ROOT/'SHA256SUMS').write_text(hashlib.sha256(dest.read_bytes()).hexdigest() + '  ' + dest.name + '\n')
+    (ROOT/'SHA256SUMS').write_text(hashlib.sha256(dest.read_bytes()).hexdigest() + '  ' + dest.name + '\n', encoding='utf-8', newline='\n')
     print(f'{dest.name}: {dest.stat().st_size} bytes')
 
 

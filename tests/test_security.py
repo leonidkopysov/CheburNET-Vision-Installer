@@ -56,7 +56,7 @@ class SecurityTests(unittest.TestCase):
 
     def test_release_version_and_component_order(self):
         installer = (ROOT/'src/installer.sh').read_text(encoding='utf-8')
-        self.assertIn('readonly CHEBURNET_VERSION=1.1.3', installer)
+        self.assertIn('readonly CHEBURNET_VERSION=1.1.4', installer)
         self.assertNotIn('experimental', installer.lower())
         self.assertNotIn('эксперимент', installer.lower())
         sequence = [

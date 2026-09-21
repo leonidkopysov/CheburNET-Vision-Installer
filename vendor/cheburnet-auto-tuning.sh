@@ -1632,9 +1632,94 @@ has_persistent_sysctl_assignment_elsewhere() {
     return 1
 }
 
+# ---- ZRAM: ограниченные по времени вызовы (исправление зависаний) ----
+ZRAM_APT_LOG="$STATE_DIR/zram-apt-${RUN_ID}.log"
+ZRAM_APT_UPDATED=0
+ZRAM_DEFERRED=0
+ZRAM_DEFERRED_READY=0
+ZRAM_PENDING_KERNEL=""
+ZRAM_APT_BLOCKED=0
+ZRAM_SERVICE_LOG="$STATE_DIR/zram-service-${RUN_ID}.log"
+
+# Не запускаем потенциально блокирующую команду без ограничителя времени.
+zram_timeout() {
+    local secs=$1; shift
+    if [[ -n $TIMEOUT_BIN ]]; then
+        "$TIMEOUT_BIN" --kill-after=15 "$secs" "$@"
+    else
+        warn "timeout отсутствует — операция ZRAM пропущена: $*" >&2
+        return 127
+    fi
+}
+
+zram_systemctl() {
+    [[ -n $SYSTEMCTL_BIN ]] || return 1
+    zram_timeout 120 "$SYSTEMCTL_BIN" --no-ask-password "$@" </dev/null >>"$ZRAM_SERVICE_LOG" 2>&1
+}
+
+zram_restart_unit() {
+    local unit=$1 rc
+    if zram_systemctl restart "$unit"; then return 0; else rc=$?; fi
+    if (( rc == 124 || rc == 137 )); then
+        # timeout завершает клиент systemctl, но не задание в PID 1.
+        # Отменяем запуск запросом stop и не ставим повторный start в очередь.
+        warn "Ожидание $unit истекло; запрашиваю остановку. Журнал: $ZRAM_SERVICE_LOG"
+        zram_systemctl --no-block stop "$unit" || warn "Не удалось запросить остановку $unit; проверьте systemctl status."
+    else
+        warn "Не удалось запустить $unit (код $rc). Журнал: $ZRAM_SERVICE_LOG"
+    fi
+    return "$rc"
+}
+
+zram_modprobe() {
+    [[ -n $MODPROBE_BIN ]] || return 1
+    zram_timeout 30 "$MODPROBE_BIN" zram num_devices=1 </dev/null >/dev/null 2>&1 \
+        || zram_timeout 30 "$MODPROBE_BIN" zram </dev/null >/dev/null 2>&1
+}
+
+zram_apt() {
+    # NEEDRESTART_MODE=l: needrestart только сообщает и НЕ перезапускает службы
+    # посреди тюнинга (при mode=a после свежего обновления системы он
+    # перезапускал службы и мог подвешивать установку).
+    (( ZRAM_APT_BLOCKED == 0 )) || return 125
+    local rc
+    if zram_timeout 900 env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=l \
+        NEEDRESTART_SUSPEND=1 APT_LISTCHANGES_FRONTEND=none UCF_FORCE_CONFFOLD=1 \
+        "$APT_GET_BIN" -q \
+        -o DPkg::Lock::Timeout=300 \
+        -o Acquire::Retries=2 \
+        -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 \
+        -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold \
+        "$@" </dev/null >>"$ZRAM_APT_LOG" 2>&1; then
+        return 0
+    else
+        rc=$?
+    fi
+    if (( rc == 124 || rc == 137 )); then
+        ZRAM_APT_BLOCKED=1
+        warn "APT превысил лимит времени; новые установки ZRAM отменены. Проверьте состояние dpkg и журнал $ZRAM_APT_LOG."
+    fi
+    return "$rc"
+}
+
+zram_pkg_installed() {
+    [[ -n $DPKG_QUERY_BIN ]] || return 1
+    # shellcheck disable=SC2016
+    [[ $(zram_timeout 15 "$DPKG_QUERY_BIN" -W -f='${Status}' "$1" 2>/dev/null || true) == 'install ok installed' ]]
+}
+
+zram_pkg_has_candidate() {
+    local cand
+    cand=$(LC_ALL=C zram_timeout 30 apt-cache policy "$1" 2>/dev/null | awk '/Candidate:/ {print $2; exit}') || return 1
+    [[ -n $cand && $cand != '(none)' ]]
+}
+
 apt_install_zram_packages() {
-    local -a pkgs=("$@")
+    local -a pkgs=() missing=()
+    local p rc
+    pkgs=("$@")
     ((${#pkgs[@]})) || return 0
+    (( ZRAM_APT_BLOCKED == 0 )) || return 1
     [[ ${INSTALL_ZRAM_PACKAGES:-1} == 1 ]] || {
         info "Автоустановка компонентов ZRAM отключена CHEBURNET_INSTALL_ZRAM_PACKAGES=0."
         return 1
@@ -1643,25 +1728,44 @@ apt_install_zram_packages() {
         warn "apt-get недоступен: нельзя автоматически установить ${pkgs[*]}."
         return 1
     }
+    for p in "${pkgs[@]}"; do
+        zram_pkg_installed "$p" || missing+=("$p")
+    done
+    ((${#missing[@]})) || { refresh_zram_bins; return 0; }
 
-    info "Устанавливаю недостающие компоненты ZRAM: ${pkgs[*]}"
-    if DEBIAN_FRONTEND=noninteractive "$APT_GET_BIN" install -y --no-install-recommends "${pkgs[@]}" >/dev/null 2>&1; then
+    # Индекс APT обновляем не более одного раза и только если пакета нет в индексе.
+    for p in "${missing[@]}"; do
+        if ! zram_pkg_has_candidate "$p" && (( ZRAM_APT_UPDATED == 0 )); then
+            ZRAM_APT_UPDATED=1
+            info "Пакет $p отсутствует в индексе APT — обновляю индекс (до 15 мин, журнал: $ZRAM_APT_LOG)."
+            zram_apt update || warn "apt-get update завершился с ошибкой/по таймауту; подробности: $ZRAM_APT_LOG"
+            (( ZRAM_APT_BLOCKED == 0 )) || return 1
+        fi
+        if ! zram_pkg_has_candidate "$p"; then
+            warn "Пакет $p недоступен в репозиториях — установка пропущена."
+            return 1
+        fi
+    done
+
+    info "Устанавливаю компоненты ZRAM: ${missing[*]} (может занять несколько минут, журнал: $ZRAM_APT_LOG)"
+    if zram_apt install -y --no-install-recommends --no-remove "${missing[@]}"; then
         refresh_zram_bins
+        ok "Компоненты ZRAM установлены: ${missing[*]}"
         return 0
+    else
+        rc=$?
     fi
-
-    info "Первичная установка не удалась; обновляю индекс APT и повторяю."
-    if DEBIAN_FRONTEND=noninteractive "$APT_GET_BIN" update >/dev/null 2>&1 \
-       && DEBIAN_FRONTEND=noninteractive "$APT_GET_BIN" install -y --no-install-recommends "${pkgs[@]}" >/dev/null 2>&1; then
-        refresh_zram_bins
-        return 0
+    if (( rc == 124 || rc == 137 )); then
+        warn "Установка ${missing[*]} прервана по таймауту; причина указана в журнале: $ZRAM_APT_LOG"
+    else
+        warn "Не удалось установить компоненты ZRAM: ${missing[*]} (код $rc). Журнал: $ZRAM_APT_LOG"
     fi
-
-    warn "Не удалось установить компоненты ZRAM: ${pkgs[*]}."
+    refresh_zram_bins
     return 1
 }
 
 ensure_zram_userspace_tools() {
+    [[ -n $TIMEOUT_BIN ]] || { warn "timeout отсутствует — автоматическая настройка ZRAM пропущена."; return 1; }
     local -a pkgs=()
     [[ -n $MODPROBE_BIN ]] || pkgs+=(kmod)
     if [[ -z $SWAPON_BIN || -z $SWAPOFF_BIN || -z $MKSWAP_BIN ]]; then
@@ -1679,29 +1783,67 @@ ensure_zram_userspace_tools() {
     return 0
 }
 
+zram_module_present() {
+    [[ -d /sys/block/zram0 || -d /sys/class/zram-control ]]
+}
+
+# Требуем более новое ядро с загрузочным образом и модулем ZRAM.
+# reboot-required может появиться после обновления userspace, а соседнее
+# ядро может быть старым. Ни то, ни другое не обещает ZRAM после reboot.
+zram_in_newer_kernel() {
+    local d cur
+    cur=$(uname -r)
+    ZRAM_PENDING_KERNEL=""
+    for d in /lib/modules/*/; do
+        d=${d%/}; d=${d##*/}
+        [[ $d != "$cur" ]] || continue
+        [[ $(printf '%s\n' "$cur" "$d" | sort -V | tail -n 1) == "$d" ]] || continue
+        [[ -f /boot/vmlinuz-$d || -f /lib/modules/$d/vmlinuz ]] || continue
+        if compgen -G "/lib/modules/$d/kernel/drivers/block/zram/zram.ko*" >/dev/null 2>&1; then
+            ZRAM_PENDING_KERNEL=$d
+            return 0
+        fi
+    done
+    return 1
+}
+
 ensure_zram_kernel_module() {
-    [[ -d /sys/block/zram0 || -d /sys/class/zram-control ]] && return 0
+    ZRAM_DEFERRED=0
+    zram_module_present && return 0
     [[ -n $MODPROBE_BIN ]] || return 1
 
-    if "$MODPROBE_BIN" zram num_devices=1 >/dev/null 2>&1 || "$MODPROBE_BIN" zram >/dev/null 2>&1; then
-        [[ -d /sys/block/zram0 || -d /sys/class/zram-control ]] && return 0
+    if zram_modprobe; then
+        local i
+        for i in 1 2 3 4 5 6 7 8 9 10; do
+            zram_module_present && return 0
+            sleep 0.5
+        done
     fi
 
-    # На Ubuntu generic модуль zram может находиться в linux-modules-extra
-    # для текущего ядра. Устанавливаем только когда обычный modprobe не сработал.
+    # Установлено новое ядро, а работает старое: не ставим linux-modules-extra
+    # под уходящее ядро (100+ МБ, пересборка initramfs, минуты «тишины»).
+    # ZRAM включится автоматически после перезагрузки в новое ядро.
+    if zram_in_newer_kernel; then
+        info "ZRAM недоступен в текущем ядре $(uname -r); найдено более новое ядро $ZRAM_PENDING_KERNEL с модулем ZRAM."
+        ZRAM_DEFERRED=1
+        return 1
+    fi
+
+    # На Ubuntu generic модуль zram может находиться в linux-modules-extra.
     local os_id=""
     if [[ -r /etc/os-release ]]; then
         os_id=$(awk -F= '$1=="ID" {gsub(/"/,"",$2); print $2; exit}' /etc/os-release 2>/dev/null || true)
     fi
     if [[ $os_id == ubuntu && ${INSTALL_ZRAM_PACKAGES:-1} == 1 ]]; then
         if apt_install_zram_packages "linux-modules-extra-$(uname -r)"; then
-            "$MODPROBE_BIN" zram num_devices=1 >/dev/null 2>&1 || "$MODPROBE_BIN" zram >/dev/null 2>&1 || true
-            [[ -d /sys/block/zram0 || -d /sys/class/zram-control ]] && return 0
+            zram_modprobe || true
+            zram_module_present && return 0
         fi
     fi
 
     return 1
 }
+# ---- конец блока исправлений ----
 
 zram_device_has_non_swap_use() {
     local dev=${1:-/dev/zram0}
@@ -1722,6 +1864,10 @@ repair_known_external_zram() {
     # linux-modules-extra-$(uname -r). Сначала восстанавливаем модуль, затем
     # уже перезапускаем существующий менеджер, не меняя его конфигурацию.
     if ! ensure_zram_kernel_module; then
+        if (( ZRAM_DEFERRED )); then
+            warn "Для внешнего ZRAM требуется загрузка ядра $ZRAM_PENDING_KERNEL и повторная проверка менеджера."
+            return 1
+        fi
         warn "Модуль zram недоступен для ядра $(uname -r); внешний менеджер ZRAM запустить нельзя."
         return 1
     fi
@@ -1729,15 +1875,14 @@ repair_known_external_zram() {
     # zram-tools / zramswap
     if has_zramswap_config; then
         attempted=1
-        if ! "$SYSTEMCTL_BIN" cat zramswap.service >/dev/null 2>&1; then
+        if ! zram_systemctl cat zramswap.service; then
             apt_install_zram_packages zram-tools || true
         fi
-        "$SYSTEMCTL_BIN" daemon-reload >/dev/null 2>&1 || true
-        if "$SYSTEMCTL_BIN" cat zramswap.service >/dev/null 2>&1; then
-            "$SYSTEMCTL_BIN" reset-failed zramswap.service >/dev/null 2>&1 || true
-            "$SYSTEMCTL_BIN" enable --now zramswap.service >/dev/null 2>&1 \
-                || "$SYSTEMCTL_BIN" restart zramswap.service >/dev/null 2>&1 \
-                || true
+        zram_systemctl daemon-reload || true
+        if zram_systemctl cat zramswap.service; then
+            zram_systemctl reset-failed zramswap.service || true
+            zram_systemctl enable zramswap.service || true
+            zram_restart_unit zramswap.service || return 1
             sleep 1
             active=$(get_active_zram)
             if [[ -n $active ]]; then
@@ -1756,11 +1901,10 @@ repair_known_external_zram() {
               && ! -x /lib/systemd/system-generators/zram-generator ]]; then
             apt_install_zram_packages systemd-zram-generator || true
         fi
-        "$SYSTEMCTL_BIN" daemon-reload >/dev/null 2>&1 || true
-        "$SYSTEMCTL_BIN" reset-failed 'systemd-zram-setup@zram0.service' >/dev/null 2>&1 || true
-        "$SYSTEMCTL_BIN" restart 'systemd-zram-setup@zram0.service' >/dev/null 2>&1 \
-            || "$SYSTEMCTL_BIN" start 'systemd-zram-setup@zram0.service' >/dev/null 2>&1 \
-            || true
+        zram_systemctl daemon-reload || true
+        zram_systemctl reset-failed 'systemd-zram-setup@zram0.service' || true
+        # Swap-юнит запускает setup как зависимость и затем включает swap.
+        zram_restart_unit dev-zram0.swap || return 1
         sleep 1
         active=$(get_active_zram)
         if [[ -n $active ]]; then
@@ -1774,14 +1918,15 @@ repair_known_external_zram() {
     # Пользовательский systemd-сервис: не переписываем его, только пытаемся
     # запустить уже существующую единицу и проверяем фактический результат.
     shopt -s nullglob
-    for f in /etc/systemd/system/zram*.service /etc/systemd/system/*zram*.service; do
+    for f in /etc/systemd/system/*zram*.service; do
         [[ -e $f && $f != "$ZRAM_SERVICE" ]] || continue
         attempted=1
         unit=$(basename "$f")
-        "$SYSTEMCTL_BIN" reset-failed "$unit" >/dev/null 2>&1 || true
-        "$SYSTEMCTL_BIN" restart "$unit" >/dev/null 2>&1 \
-            || "$SYSTEMCTL_BIN" start "$unit" >/dev/null 2>&1 \
-            || true
+        zram_systemctl reset-failed "$unit" || true
+        if ! zram_restart_unit "$unit"; then
+            shopt -u nullglob
+            return 1
+        fi
         sleep 1
         active=$(get_active_zram)
         if [[ -n $active ]]; then
@@ -1799,6 +1944,7 @@ repair_known_external_zram() {
 }
 
 create_or_repair_cheburnet_zram() {
+    ZRAM_DEFERRED_READY=0
     ZRAM_SIZE_MB=$((RAM_MB / 4))
     (( ZRAM_SIZE_MB < 128 )) && ZRAM_SIZE_MB=128
     (( ZRAM_SIZE_MB > 2048 )) && ZRAM_SIZE_MB=2048
@@ -1809,6 +1955,16 @@ create_or_repair_cheburnet_zram() {
     }
     ensure_zram_userspace_tools || return 1
     if ! ensure_zram_kernel_module; then
+        if (( ZRAM_DEFERRED )); then
+            write_cheburnet_zram_units || return 1
+            if zram_systemctl daemon-reload && zram_systemctl enable cheburnet-zram.service; then
+                ZRAM_DEFERRED_READY=1
+                ZRAM_STATUS="запуск отложен: загрузитесь в ядро $ZRAM_PENDING_KERNEL и проверьте swap"
+                info "cheburnet-zram.service включён; попытка запуска ZRAM запланирована при следующей загрузке. Требуется ядро $ZRAM_PENDING_KERNEL."
+                return 0
+            fi
+            ZRAM_STATUS="не удалось включить отложенный запуск ZRAM"
+        fi
         warn "Модуль zram недоступен для ядра $(uname -r); ZRAM не создан."
         return 1
     fi
@@ -1818,14 +1974,38 @@ create_or_repair_cheburnet_zram() {
         return 1
     fi
 
-    mkdir -p /usr/local/sbin
-    cat >"$ZRAM_SETUP" <<EOF
+    write_cheburnet_zram_units || return 1
+
+    zram_systemctl daemon-reload || return 1
+    zram_systemctl reset-failed cheburnet-zram.service || true
+    # enable --now не перезапускает active (exited), даже если swap уже пропал.
+    # restart ограничен TimeoutStartSec в юните и timeout здесь.
+    if zram_systemctl enable cheburnet-zram.service \
+       && zram_restart_unit cheburnet-zram.service; then
+        sleep 1
+        ZRAM_ACTIVE_DEV=$(get_active_zram)
+        if [[ -n $ZRAM_ACTIVE_DEV ]]; then
+            ZRAM_MANAGED_BY_CHEBURNET=1
+            ZRAM_STATUS="ЧебурNET ${ZRAM_SIZE_MB} MB (${ZRAM_ACTIVE_DEV})"
+            ok "ZRAM создан/восстановлен: ${ZRAM_ACTIVE_DEV}, ${ZRAM_SIZE_MB} MB, priority=100"
+            return 0
+        fi
+    fi
+
+    warn "cheburnet-zram.service не подтвердил активный /dev/zram* swap (см. journalctl -u cheburnet-zram)."
+    ZRAM_STATUS="сервис ЧебурNET не смог активировать swap"
+    return 1
+}
+
+write_cheburnet_zram_units() {
+    mkdir -p /usr/local/sbin || return 1
+    cat >"$ZRAM_SETUP" <<EOF || return 1
 #!/usr/bin/env bash
 set -euo pipefail
 MODPROBE_BIN='${MODPROBE_BIN}'
 SWAPON_BIN='${SWAPON_BIN}'
-SWAPOFF_BIN='${SWAPOFF_BIN}'
 MKSWAP_BIN='${MKSWAP_BIN}'
+TIMEOUT_BIN='${TIMEOUT_BIN}'
 SIZE_MB='${ZRAM_SIZE_MB}'
 
 active_zram() {
@@ -1836,7 +2016,12 @@ if [[ -n \$(active_zram) ]]; then
     exit 0
 fi
 
-"\$MODPROBE_BIN" zram num_devices=1 >/dev/null 2>&1 || "\$MODPROBE_BIN" zram >/dev/null 2>&1
+"\$TIMEOUT_BIN" --kill-after=5 15 "\$MODPROBE_BIN" zram num_devices=1 >/dev/null 2>&1 || "\$TIMEOUT_BIN" --kill-after=5 15 "\$MODPROBE_BIN" zram >/dev/null 2>&1
+# Узел /dev/zram0 может появиться не сразу после modprobe.
+for _ in \$(seq 1 20); do
+    [[ -e /sys/block/zram0/disksize || -r /sys/class/zram-control/hot_add ]] && break
+    sleep 0.25
+done
 
 # Обычно модуль создаёт zram0. Если он был удалён через hot_remove,
 # восстанавливаем устройство через zram-control.
@@ -1850,6 +2035,10 @@ fi
 
 DEV=\${DEV:-/dev/zram0}
 SYS=\${SYS:-/sys/block/zram0}
+for _ in \$(seq 1 20); do
+    [[ -b \$DEV && -e \$SYS/disksize ]] && break
+    sleep 0.25
+done
 [[ -b \$DEV && -e \$SYS/disksize ]] || exit 1
 
 # Никогда не сбрасываем zram, который используется как файловая система.
@@ -1862,7 +2051,7 @@ if [[ \$current =~ ^[0-9]+$ ]] && (( current > 0 )); then
     # Отсутствие mount/swap не доказывает, что чужое блочное устройство пусто.
     # Уже инициализированный ZRAM не сбрасываем и не форматируем: пытаемся
     # включить существующий swap, а при другой сигнатуре оставляем данные.
-    "\$SWAPON_BIN" --priority 100 "\$DEV"
+    "\$TIMEOUT_BIN" --kill-after=5 15 "\$SWAPON_BIN" --priority 100 "\$DEV"
     [[ -n \$(active_zram) ]] || exit 4
     exit 0
 fi
@@ -1877,15 +2066,15 @@ if [[ -w \$SYS/comp_algorithm ]]; then
 fi
 
 echo \$((SIZE_MB * 1024 * 1024)) >"\$SYS/disksize"
-"\$MKSWAP_BIN" -f "\$DEV" >/dev/null
-"\$SWAPON_BIN" --priority 100 "\$DEV"
+"\$TIMEOUT_BIN" --kill-after=5 15 "\$MKSWAP_BIN" -f "\$DEV" >/dev/null
+"\$TIMEOUT_BIN" --kill-after=5 15 "\$SWAPON_BIN" --priority 100 "\$DEV"
 
 active=\$(active_zram)
 [[ -n \$active ]] || exit 4
 EOF
-    chmod 0755 "$ZRAM_SETUP"
+    chmod 0755 "$ZRAM_SETUP" || return 1
 
-    cat >"$ZRAM_SERVICE" <<EOF
+    cat >"$ZRAM_SERVICE" <<EOF || return 1
 [Unit]
 Description=ЧебурNET — проверка и восстановление ZRAM
 After=systemd-modules-load.service
@@ -1894,30 +2083,13 @@ After=systemd-modules-load.service
 Type=oneshot
 ExecStart=${ZRAM_SETUP}
 RemainAfterExit=yes
+TimeoutStartSec=90
+TimeoutStopSec=15
 
 [Install]
 WantedBy=multi-user.target
 EOF
     chmod 0644 "$ZRAM_SERVICE"
-
-    "$SYSTEMCTL_BIN" daemon-reload
-    "$SYSTEMCTL_BIN" reset-failed cheburnet-zram.service >/dev/null 2>&1 || true
-    # enable --now не перезапускает active (exited), даже если swap уже пропал.
-    if "$SYSTEMCTL_BIN" enable cheburnet-zram.service >/dev/null 2>&1 \
-       && "$SYSTEMCTL_BIN" restart cheburnet-zram.service >/dev/null 2>&1; then
-        sleep 1
-        ZRAM_ACTIVE_DEV=$(get_active_zram)
-        if [[ -n $ZRAM_ACTIVE_DEV ]]; then
-            ZRAM_MANAGED_BY_CHEBURNET=1
-            ZRAM_STATUS="ЧебурNET ${ZRAM_SIZE_MB} MB (${ZRAM_ACTIVE_DEV})"
-            ok "ZRAM создан/восстановлен: ${ZRAM_ACTIVE_DEV}, ${ZRAM_SIZE_MB} MB, priority=100"
-            return 0
-        fi
-    fi
-
-    warn "cheburnet-zram.service запущен, но активный /dev/zram* swap не подтверждён."
-    ZRAM_STATUS="сервис ЧебурNET не смог активировать swap"
-    return 1
 }
 
 # Шаг 1. Фактическая проверка, а не наличие конфиг-файла.
@@ -1935,7 +2107,7 @@ if [[ -n $ZRAM_ACTIVE_DEV ]]; then
     ZRAM_PRIO=$(get_zram_priority "$ZRAM_ACTIVE_DEV")
     if (( ZRAM_SIZE_MB > 0 )); then
         if [[ -f $ZRAM_SERVICE && -n $SYSTEMCTL_BIN ]] \
-           && "$SYSTEMCTL_BIN" is-active --quiet cheburnet-zram.service 2>/dev/null \
+           && zram_systemctl is-active --quiet cheburnet-zram.service \
            && ! has_external_zram_manager; then
             ZRAM_MANAGED_BY_CHEBURNET=1
             ZRAM_STATUS="ЧебурNET активен (${ZRAM_ACTIVE_DEV}, ${ZRAM_SIZE_MB} MB)"
@@ -1991,7 +2163,11 @@ if [[ -n $ZRAM_ACTIVE_DEV ]]; then
         ZRAM_STATUS="активен, но проверка disksize не пройдена"
     fi
 else
-    warn "Итоговая проверка: активный ZRAM не обнаружен."
+    if (( ZRAM_DEFERRED_READY )); then
+        info "$ZRAM_STATUS"
+    else
+        warn "Итоговая проверка: активный ZRAM не обнаружен."
+    fi
     [[ $ZRAM_STATUS != "не проверен" ]] || ZRAM_STATUS="не активен"
 fi
 
@@ -4744,6 +4920,8 @@ if [[ -n $ZCHECK ]]; then
     else
         final_warn "ZRAM" "$ZCHECK активен, но disksize не подтверждён"
     fi
+elif (( ZRAM_DEFERRED_READY )); then
+    final_skip "ZRAM" "$ZRAM_STATUS"
 else
     final_warn "ZRAM" "не активен — ${ZRAM_STATUS:-причина не определена}"
 fi

@@ -11,7 +11,7 @@ set -Eeuo pipefail
 umask 077
 export LC_ALL=C.UTF-8
 export PYTHONUTF8=1
-readonly CHEBURNET_VERSION=1.1.3
+readonly CHEBURNET_VERSION=1.1.4
 # Фиксированный каталог используется службами systemd и хуками.
 readonly BASE=/opt/remnanode
 WORK=''
@@ -491,6 +491,8 @@ apply_tuning() {
     port=$(get_setting node_port); ips=$(get_setting panel_ips)
     # Порт тюнинга обязан совпадать с NODE_PORT.
     # Сертификатами управляет этот установщик: standalone ACME и временный TCP/80.
+    # needrestart в режиме list: не перезапускать службы посреди тюнинга.
+    NEEDRESTART_MODE=l NEEDRESTART_SUSPEND=1 \
     CHEBURNET_ASSUME_YES=1 CHEBURNET_PANEL_PORT="$port" CHEBURNET_PANEL_IPS="$ips" \
       CHEBURNET_SECURITY=1 CHEBURNET_HARDEN_SSH=0 \
       CHEBURNET_FIREWALL_PORTS='tcp:443' CHEBURNET_ENABLE_UFW=1 CHEBURNET_CERTIFICATES=0 \
