@@ -6,7 +6,7 @@
 
 ### VLESS TLS Vision + Unix-Socket Decoy для Remnawave
 
-![Version](https://img.shields.io/badge/version-1.1.4-8b5cf6?style=for-the-badge)
+![Version](https://img.shields.io/badge/version-1.1.5-8b5cf6?style=for-the-badge)
 [![Validation](https://img.shields.io/github/actions/workflow/status/leonidkopysov/CheburNET-Vision-Installer/validate.yml?branch=main&style=for-the-badge&label=проверка)](https://github.com/leonidkopysov/CheburNET-Vision-Installer/actions/workflows/validate.yml)
 [![License](https://img.shields.io/badge/license-MIT-22c55e?style=for-the-badge)](LICENSE)
 ![TLS](https://img.shields.io/badge/TLS-1.3-06b6d4?style=for-the-badge)
@@ -91,7 +91,7 @@ sha256sum -c SHA256SUMS && bash ./cheburnet-vision-install.sh
 
 `fail2ban` и `unattended-upgrades` устанавливаются вместе с обязательными пакетами, чтобы Auto Tuning не повторял обновление индекса APT. Дополнительный `apt update` выполняется только после добавления официального репозитория Docker — без него APT не увидит пакеты Docker. В 1.1.4 обновлён блок ZRAM встроенного Auto Tuning: ограничено ожидание APT и служб, добавлены журналы и проверяемый перенос запуска на новое ядро. Если пакет ZRAM отсутствует в индексе, тюнинг может один раз обновить индекс APT.
 
-Версия установщика — `1.1.4`. История, прежние теги и релизы сохранены. Публикация тега `v1.1.4` и файлов релиза выполняется GitHub Actions только после успешных проверок. Статус публикации: [Actions](https://github.com/leonidkopysov/CheburNET-Vision-Installer/actions/workflows/validate.yml).
+Версия установщика — `1.1.5`. В этой версии проверка SSH восстанавливает временный каталог `/run/sshd`, если он исчез во время обновления OpenSSH. История, прежние теги и релизы сохранены. Публикация тега `v1.1.5` и файлов релиза выполняется GitHub Actions только после успешных проверок. Статус публикации: [Actions](https://github.com/leonidkopysov/CheburNET-Vision-Installer/actions/workflows/validate.yml).
 
 `main` изменяется со временем. Для воспроизводимой установки используйте файлы [конкретного выпуска](https://github.com/leonidkopysov/CheburNET-Vision-Installer/releases) или URL с полным SHA коммита. Сумма, скачанная рядом со скриптом, обнаруживает повреждение/рассинхронизацию, но не является независимой подписью. Короткий запуск через process substitution не проверяет SHA-256 самого установщика.
 
