@@ -56,7 +56,7 @@ class SecurityTests(unittest.TestCase):
 
     def test_release_version_and_component_order(self):
         installer = (ROOT/'src/installer.sh').read_text(encoding='utf-8')
-        self.assertIn('readonly CHEBURNET_VERSION=1.1.4', installer)
+        self.assertIn('readonly CHEBURNET_VERSION=1.1.5', installer)
         self.assertNotIn('experimental', installer.lower())
         self.assertNotIn('эксперимент', installer.lower())
         sequence = [
@@ -179,6 +179,31 @@ printf 'systemctl %s\n' "$*" >> "$TEST_EVENTS"
             self.assertEqual(p.returncode,0,p.stderr)
             self.assertIn('systemctl daemon-reload',events.read_text())
             self.assertNotIn('try-reload-or-restart',events.read_text())
+
+    def test_ssh_validation_recovers_missing_runtime_directory(self):
+        source=(ROOT/'src/hardening.sh').read_text().split('SSH_DROPIN=')[0]
+        with tempfile.TemporaryDirectory() as td:
+            root=Path(td)
+            base=root/'node';base.mkdir()
+            (base/'.cheburnet-managed').touch()
+            runtime_dir=root/'run/sshd'
+            bin_dir=root/'bin';bin_dir.mkdir()
+            (bin_dir/'systemctl').write_text('#!/bin/bash\n[[ $* == "is-active --quiet ssh.service" ]]\n')
+            (bin_dir/'install').write_text('#!/bin/bash\nmkdir -p -- "${@: -1}"\n')
+            (bin_dir/'sshd').write_text('''#!/bin/bash
+[[ -d $TEST_RUNTIME_DIR ]] || { echo 'Missing privilege separation directory' >&2; exit 255; }
+[[ $1 == -T ]] && printf 'port 22\n'
+exit 0
+''')
+            for stub in bin_dir.iterdir(): stub.chmod(0o700)
+            harness=source.replace('/opt/remnanode',str(base)).replace('/run/sshd',str(runtime_dir))
+            env={**os.environ,'PATH':str(bin_dir)+':'+os.environ['PATH'],
+                 'TEST_RUNTIME_DIR':str(runtime_dir)}
+            for _ in range(2):
+                p=subprocess.run(['bash','-c',harness],env=env,capture_output=True,text=True,timeout=10)
+                self.assertEqual(p.returncode,0,p.stderr)
+                self.assertTrue(runtime_dir.is_dir())
+                self.assertIn('port 22',(base/'backups/sshd-effective-before.txt').read_text())
 
 
 if __name__ == '__main__': unittest.main(verbosity=2)

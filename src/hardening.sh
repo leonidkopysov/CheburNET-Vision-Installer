@@ -16,6 +16,9 @@ fi
 install -d -m 700 "$BASE/backups"
 # Only these agreed connection limits are changed. Authentication and TCP
 # forwarding retain their effective configuration, including Match sections.
+# /run is volatile; an OpenSSH package upgrade can remove this directory while
+# an existing SSH session or socket remains active.
+install -d -o root -g root -m 0755 /run/sshd
 sshd -t
 sshd -T > "$BASE/backups/sshd-effective-before.txt"
 SSH_DROPIN=/etc/ssh/sshd_config.d/00-cheburnet-vision.conf
