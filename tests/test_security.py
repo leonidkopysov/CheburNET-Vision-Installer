@@ -137,7 +137,10 @@ class SecurityTests(unittest.TestCase):
             (root/'node/.cheburnet-managed').touch()
             dropin=root/'etc/ssh/sshd_config.d/00-cheburnet-vision.conf'
             original='# existing owned configuration\n'
-            harness=source.replace('/opt/remnanode',str(root/'node')).replace('/etc/',str(root/'etc')+'/')
+            harness=(source.replace('/opt/remnanode',str(root/'node'))
+                    .replace('/etc/',str(root/'etc')+'/')
+                    .replace('/run/sshd',str(root/'run/sshd')))
+            (root/'bin/install').write_text('#!/bin/bash\nmkdir -p -- "${@: -1}"\n')
             (root/'bin/sshd').write_text('''#!/bin/bash
 [[ $1 == -t ]] && exit 0
 printf 'allowtcpforwarding %s\npasswordauthentication yes\npubkeyauthentication yes\npermitrootlogin prohibit-password\nkbdinteractiveauthentication no\nauthenticationmethods any\n' "${FORWARD_MODE:-yes}"
